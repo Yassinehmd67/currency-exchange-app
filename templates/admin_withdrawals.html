@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="{{ session.get('lang', 'ar') }}">
+<head>
+  <meta charset="utf-8">
+  <title>{{ t('withdrawals') }}</title>
+  <style>
+    body { font-family: 'Cairo', system-ui, sans-serif; background:#f7f7f7; margin:0; padding:20px;
+           direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};}
+    h1 { margin-top:0; }
+    table { width:100%; border-collapse: collapse; background:#fff; }
+    th, td { border:1px solid #ddd; padding:8px; text-align:center;}
+    th { background:#f0f0f0; }
+    .actions form { display:inline-block; margin:0 4px; }
+    .btn { padding:6px 10px; border:none; border-radius:6px; cursor:pointer; }
+    .approve { background:#2ecc71; color:#fff;}
+    .reject { background:#e74c3c; color:#fff;}
+    a { text-decoration:none; color:#3498db; }
+    .topbar { margin-bottom:16px; display:flex; gap:12px; align-items:center; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a href="{{ url_for('index') }}">🏠 {{ t('home') }}</a>
+    <a href="{{ url_for('admin_overview') }}">🛡️ {{ t('admin_panel') }}</a>
+    <a href="{{ url_for('logout') }}">🔓 {{ t('logout') }}</a>
+  </div>
+  <h1>{{ t('withdrawals') }}</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th><th>{{ t('user') }}</th><th>⏰</th><th>💰</th><th>🏳️</th><th>📧</th><th>{{ t('status') }}</th><th>{{ t('actions') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for w in withdrawals %}
+      <tr>
+        <td>{{ w.id }}</td>
+        <td>{{ w.username }}</td>
+        <td>{{ w.timestamp }}</td>
+        <td>{{ '%.2f'|format(w.amount) }}</td>
+        <td>{{ w.currency }}</td>
+        <td>{{ w.email }}</td>
+        <td>{{ w.status }}</td>
+        <td class="actions">
+          {% if w.status == 'pending' %}
+          <form method="POST" action="{{ url_for('approve_withdrawal', wid=w.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn approve" type="submit">{{ t('approve') }}</button>
+          </form>
+          <form method="POST" action="{{ url_for('reject_withdrawal', wid=w.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn reject" type="submit">{{ t('reject') }}</button>
+          </form>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

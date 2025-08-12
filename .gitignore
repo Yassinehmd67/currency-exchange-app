@@ -1,0 +1,9 @@
+.env
+.env.*
+venv/
+__pycache__/
+__pycache__/
+*.pyc
+data.db
+rates_cache.json
+*.log

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="{{ session.get('lang','ar') }}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>لوحة المستخدم</title>
+  <style>
+    body{font-family:system-ui,"Cairo",sans-serif;margin:0;background:#f7f7f9;
+         direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};}
+    header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#111;color:#fff}
+    header a{color:#9ad; text-decoration:none; margin-inline:8px}
+    main{max-width:980px;margin:24px auto; padding:0 12px}
+    .grid{display:grid;grid-template-columns:1fr;gap:16px}
+    @media(min-width:900px){.grid{grid-template-columns:1fr 1fr}}
+    .card{background:#fff;border:1px solid #e8e8ef;border-radius:14px;padding:16px;box-shadow:0 2px 10px rgba(0,0,0,.03)}
+    h1,h2{margin:6px 0 12px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px solid #eee;text-align:center}
+    .muted{opacity:.8;font-size:12px}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+    label{display:block;margin-bottom:4px;font-size:14px}
+    input,select,button{padding:10px;border:1px solid #ddd;border-radius:8px;font:inherit}
+    button{cursor:pointer}
+    .top-links{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .lang{font-size:13px;opacity:.9}
+    .ok{color:#1a7f37}.err{color:#b54708}
+    .btns{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    .split{display:grid;grid-template-columns:1fr;gap:12px}
+    @media(min-width:640px){.split{grid-template-columns:1fr 1fr}}
+    .badge{display:inline-block;background:#eef;padding:2px 8px;border-radius:999px;font-size:12px}
+    .warn{padding:8px;border:1px solid #f3c; background:#fff0f6;border-radius:10px}
+    .btn-plain{border:1px solid #111;background:#111;color:#fff;border-radius:8px;padding:10px 12px}
+    .btn-plain[disabled]{opacity:.6;cursor:not-allowed}
+  </style>
+</head>
+<body>
+<header>
+  <div class="top-links">
+    <a href="{{ url_for('index') }}">🏠 {{ t('home') if t else 'الرئيسية' }}</a>
+    {% if session.get('is_admin') %}
+      <a href="{{ url_for('admin_overview') }}">🛡️ {{ t('admin_panel') if t else 'لوحة الإدارة' }}</a>
+      <a href="{{ url_for('admin_withdrawals') }}">💸 {{ t('withdrawals') if t else 'طلبات السحب' }}</a>
+    {% endif %}
+  </div>
+  <div class="top-links">
+    <span class="lang">
+      <a href="{{ url_for('set_lang', lang='ar', next=request.full_path) }}">{{ t('arabic') if t else 'العربية' }}</a> |
+      <a href="{{ url_for('set_lang', lang='en', next=request.full_path) }}">{{ t('english') if t else 'الإنجليزية' }}</a>
+    </span>
+    <a href="{{ url_for('logout') }}">🔓 {{ t('logout') if t else 'تسجيل الخروج' }}</a>
+  </div>
+</header>
+
+<main>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="card" aria-live="polite">
+        {% for cat,msg in messages %}
+          <div class="{{ 'ok' if cat=='success' else 'err' if cat=='error' else '' }}">{{ msg }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <div class="grid">
+    <!-- الرصيد -->
+    <section class="card">
+      <h2>💰 أرصدة حسابك</h2>
+      <table>
+        <thead><tr><th>العملة</th><th>الرصيد</th></tr></thead>
+        <tbody>
+          {% for cur,amt in (balances or {}).items() %}
+          <tr><td>{{ cur }}</td><td>{{ '%.2f'|format(amt) }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted">طلبات السحب المعلقة: {{ pending_withdrawals_count or 0 }}</p>
+    </section>
+
+    <!-- معاملات أخيرة -->
+    <section class="card">
+      <h2>📜 المعاملات الأخيرة</h2>
+      <table>
+        <thead><tr><th>الوقت</th><th>النوع</th><th>القيمة</th><th>العملة</th></tr></thead>
+        <tbody>
+          {% for t in transactions %}
+          <tr>
+            <td>{{ t.timestamp }}</td>
+            <td>{{ t.type }}</td>
+            <td>{{ t.amount }}</td>
+            <td>{{ t.currency }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="muted">لا توجد معاملات بعد</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <!-- تحويل بين العملات -->
+  <section class="card">
+    <h2>🔁 تحويل رصيد بين العملات</h2>
+    <form method="POST" action="{{ url_for('convert_balance') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="row">
+        <div>
+          <label>من</label>
+          <select name="from_currency" required>
+            {% for cur in supported %}<option value="{{ cur }}">{{ cur }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>إلى</label>
+          <select name="to_currency" required>
+            {% for cur in supported %}<option value="{{ cur }}">{{ cur }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>المبلغ</label>
+          <input type="number" name="amount" min="0" step="0.01" required>
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <button type="submit">تحويل</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- شحن عبر Binance Pay فقط -->
+  <section class="card">
+    <h2>🟡 Binance Pay شحن الرصيد (USDT / BTC)</h2>
+    {% if not binance_enabled %}
+      <div class="warn">⚠️ لم يتم ضبط مفاتيح Binance Pay. أضف <code>BINANCE_API_KEY</code> و<code>BINANCE_API_SECRET</code> في <code>.env</code>.</div>
+    {% endif %}
+    <div class="split">
+      <form class="row" onsubmit="return false">
+        <div>
+          <label>العملة الرقمية</label>
+          <select id="bp_crypto">
+            <option value="USDT">USDT</option>
+            <option value="BTC">BTC</option>
+          </select>
+        </div>
+        <div>
+          <label>المبلغ المراد دفعه</label>
+          <input type="number" id="bp_amount" min="0.5" step="0.00000001" required>
+        </div>
+      </form>
+      <div>
+        <span class="badge">الدفع على صفحة Binance الآمنة</span>
+        <div class="btns" style="margin-top:10px">
+          <button id="binance-pay" type="button" class="btn-plain" {{ 'disabled' if not binance_enabled else '' }}>🟡 ادفع عبر Binance Pay</button>
+        </div>
+        <p class="muted">بعد الدفع ستعود تلقائيًا للموقع، وسيُضاف الرصيد بالدولار (USDT≈USD، وBTC يُحوّل بسعر لحظي).</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- طلب سحب يدوي -->
+  <section class="card">
+    <h2>💸 طلب سحب</h2>
+    <form method="POST" action="{{ url_for('withdraw') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="row">
+        <div>
+          <label>المبلغ</label>
+          <input type="number" name="withdraw_amount" min="1" step="0.01" required>
+        </div>
+        <div>
+          <label>العملة</label>
+          <select name="withdraw_currency" required>
+            {% for cur in supported %}<option value="{{ cur }}">{{ cur }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>بريد جهة السحب (مثال: PayPal أو بنك)</label>
+          <input type="email" name="paypal_email" placeholder="you@example.com" required>
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <button type="submit">إرسال طلب السحب</button>
+      </div>
+      <p class="muted">سيتم معالجة السحب يدويًا بعد التحقق.</p>
+    </form>
+  </section>
+</main>
+
+<script>
+(function(){
+  const bpBtn = document.getElementById('binance-pay');
+  const amtInput = document.getElementById('bp_amount');
+  const cryptoSel = document.getElementById('bp_crypto');
+
+  function getAmount(){
+    const v = parseFloat(amtInput.value || '0');
+    return (isFinite(v) && v > 0) ? v.toFixed(8) : null;
+  }
+
+  bpBtn?.addEventListener('click', async () => {
+    const amount = getAmount();
+    if (!amount){ alert('يرجى إدخال مبلغ صحيح (> 0)'); return; }
+    bpBtn.disabled = true; const old = bpBtn.textContent; bpBtn.textContent = '⏳ جاري إنشاء الطلب...';
+    try{
+      const res = await fetch("{{ url_for('binance_create_order') }}", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: parseFloat(amount), crypto: cryptoSel.value })
+      });
+      const data = await res.json();
+      if (!data.ok || !data.url){
+        console.error('Binance create order error:', data);
+        alert('تعذر إنشاء طلب Binance Pay.');
+        bpBtn.disabled = false; bpBtn.textContent = old;
+        return;
+      }
+      window.location = data.url; // الدفع على Binance
+    }catch(e){
+      alert('خطأ في الشبكة أثناء بدء الدفع.');
+      bpBtn.disabled = false; bpBtn.textContent = old;
+    }
+  });
+})();
+</script>
+</body>
+</html>

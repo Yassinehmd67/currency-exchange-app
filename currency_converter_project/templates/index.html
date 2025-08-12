@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="{{ session.get('lang', 'ar') }}">
+<head>
+    <meta charset="UTF-8">
+    <title>{% if session.get('lang') == 'en' %}Dashboard{% else %}لوحة التحكم{% endif %}</title>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/6.6.6/css/flag-icons.min.css">
+
+    <style>
+        body {
+            font-family: 'Cairo', sans-serif;
+            background-color: #f4f6f8;
+            margin: 0;
+            padding: 0;
+            direction: {{ 'rtl' if session.get('lang', 'ar') == 'ar' else 'ltr' }};
+        }
+
+        .language-switch {
+            display: flex;
+            justify-content: {{ 'flex-start' if session.get('lang', 'ar') == 'en' else 'flex-end' }};
+            padding: 15px;
+        }
+
+        .language-switch a {
+            text-decoration: none;
+            color: #3498db;
+            font-weight: bold;
+        }
+
+        .dashboard-box {
+            max-width: 850px;
+            margin: 30px auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+        }
+
+        h2, h3 {
+            color: #2c3e50;
+            text-align: center;
+        }
+
+        .flash {
+            text-align: center;
+            margin-bottom: 10px;
+            color: #c0392b;
+            font-weight: bold;
+        }
+
+        .balance-grid {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .balance-card {
+            background-color: #ecf0f1;
+            padding: 15px;
+            border-radius: 8px;
+            min-width: 110px;
+            text-align: center;
+            font-size: 16px;
+        }
+
+        .paypal-form, .convert-form {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .paypal-form input, .paypal-form select,
+        .convert-form input, .convert-form select {
+            width: 100%;
+            max-width: 300px;
+            text-align: center;
+        }
+
+        .transaction-log h4 {
+            cursor: pointer;
+            text-align: center;
+            color: #3498db;
+        }
+
+        .hidden { display: none; }
+
+        ul {
+            list-style: none;
+            padding: 0;
+            text-align: center;
+        }
+
+        li.tx-entry {
+            padding: 10px;
+            margin: 5px 0;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+        }
+
+        .tx-entry.withdraw { background-color: #ffeaea; }
+        .tx-entry.convert  { background-color: #eaf4ff; }
+        .tx-entry.deposit  { background-color: #eaffea; }
+
+        button {
+            cursor: pointer;
+            background-color: #3498db;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+    </style>
+</head>
+<body>
+
+<div class="language-switch">
+    <a href="{{ url_for('toggle_language') }}">
+        🌐 {% if session.get('lang', 'ar') == 'ar' %}English{% else %}العربية{% endif %}
+    </a>
+</div>
+
+<div class="dashboard-box">
+    <h2>{{ '👋 Welcome' if session.get('lang') == 'en' else '👋 مرحباً' }} {{ username }}</h2>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <p class="{{ category }} flash">{{ message }}</p>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <h3>{{ '💰 Your Balances' if session.get('lang') == 'en' else '💰 رصيدك الحالي' }}</h3>
+    <div class="balance-grid">
+        {% for c, v in user.balance.items() %}
+            <div class="balance-card">
+                <span class="flag-icon flag-icon-{{ currency_to_country[c] }}"></span>
+                <strong>{{ c }}</strong><br>
+                {{ "%.2f"|format(v) }}
+            </div>
+        {% endfor %}
+    </div>
+
+    <h3>{{ '💳 Recharge via PayPal or Card' if session.get('lang') == 'en' else '💳 الشحن عبر بايبال أو بطاقة' }}</h3>
+    <form id="paypal-form" class="paypal-form">
+        {{ csrf_token() }}
+        <input type="number" id="paypal_amount" step="0.01"
+               placeholder="{{ 'Amount' if session.get('lang') == 'en' else 'المبلغ' }}">
+        <select id="paypal_currency">
+            {% for c in currencies %}
+                <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+        </select>
+        <div id="paypal-button-container"></div>
+    </form>
+
+    <h3>{{ '💱 Currency Converter' if session.get('lang') == 'en' else '💱 محول العملات' }}</h3>
+    <form id="convert-form" class="convert-form" onsubmit="event.preventDefault(); convertCurrency();">
+        <input type="number" id="convert_amount" step="0.01" min="0"
+               placeholder="{{ 'Amount' if session.get('lang') == 'en' else 'المبلغ' }}" required>
+        <select id="convert_from" required>
+            {% for c in currencies %}
+                <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+        </select>
+        <select id="convert_to" required>
+            {% for c in currencies %}
+                <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit">{{ 'Convert' if session.get('lang') == 'en' else 'تحويل' }}</button>
+    </form>
+    <p id="convert_result" style="text-align:center; font-weight:bold;"></p>
+
+    <h3>{{ '📤 Withdrawal Request' if session.get('lang') == 'en' else '📤 طلب سحب' }}</h3>
+    <form action="{{ url_for('paypal_payout') }}" method="POST">
+        {{ csrf_token() }}
+        <input type="number" step="0.01" name="paypal_withdraw_amount"
+               placeholder="{{ 'Amount' if session.get('lang') == 'en' else 'المبلغ' }}" required>
+        <select name="paypal_withdraw_currency">
+            {% for c in currencies %}
+                <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+        </select>
+        <input type="email" name="paypal_email"
+               placeholder="{{ 'PayPal Email' if session.get('lang') == 'en' else 'البريد الإلكتروني لـ PayPal' }}" required>
+        <button type="submit">{{ 'Request' if session.get('lang') == 'en' else 'طلب سحب' }}</button>
+    </form>
+
+    <div class="transaction-log">
+        <h4 onclick="document.getElementById('log').classList.toggle('hidden')">
+            {{ '📜 Transaction History' if session.get('lang') == 'en' else '📜 سجل العمليات' }}
+        </h4>
+        <ul id="log" class="hidden">
+            {% for tx in user.transactions|reverse %}
+                <li class="tx-entry
+                    {% if 'سحب' in tx.type or 'Withdraw' in tx.type %}withdraw
+                    {% elif 'تحويل' in tx.type or 'Convert' in tx.type %}convert
+                    {% elif 'شحن' in tx.type or 'Deposit' in tx.type %}deposit
+                    {% endif %}">
+                    🕒 {{ tx.timestamp }}<br>
+                    📄 {{ tx.type }}<br>
+                    💰 {{ tx.amount }} {{ tx.currency or '' }}
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <a href="{{ url_for('about') }}">
+        {{ 'ℹ️ About the App' if session.get('lang') == 'en' else 'ℹ️ معلومات حول التطبيق' }}
+    </a>
+
+    <a href="{{ url_for('logout') }}">
+        {{ '🔓 Logout' if session.get('lang') == 'en' else '🔓 تسجيل الخروج' }}
+    </a>
+</div>
+
+<!-- ✅ PayPal SDK script -->
+<script>
+    let paypalLoaded = false;
+
+    function loadPayPalSDK(currency) {
+        if (paypalLoaded) {
+            renderPayPalButtons(currency);
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = `https://www.paypal.com/sdk/js?client-id={{ paypal_client_id }}&currency=${currency}&components=buttons,funding-eligibility`;
+        script.onload = () => {
+            paypalLoaded = true;
+            renderPayPalButtons(currency);
+        };
+        document.head.appendChild(script);
+    }
+
+    function renderPayPalButtons(currency) {
+        const amount = document.getElementById('paypal_amount').value || '1.00';
+        paypal.Buttons({
+            style: {
+                layout: 'vertical',
+                color: 'blue',
+                shape: 'rect',
+                label: 'paypal'
+            },
+            createOrder: function (data, actions) {
+                return actions.order.create({
+                    purchase_units: [{
+                        amount: { value: amount, currency_code: currency }
+                    }]
+                });
+            },
+            onApprove: function (data, actions) {
+                return actions.order.capture().then(function (details) {
+                    fetch("/paypal_capture", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            orderID: data.orderID,
+                            amount: amount,
+                            currency: currency
+                        })
+                    }).then(res => res.json()).then(data => {
+                        alert(data.success
+                            ? "{{ '✅ تم الشحن بنجاح!' if session.get('lang') == 'ar' else '✅ Payment successful!' }}"
+                            : "{{ '❌ فشل في الشحن.' if session.get('lang') == 'ar' else '❌ Payment failed.' }}");
+                        if (data.success) location.reload();
+                    });
+                });
+            }
+        }).render('#paypal-button-container');
+    }
+
+    // التحميل الأولي
+    const initialCurrency = document.getElementById('paypal_currency').value;
+    loadPayPalSDK(initialCurrency);
+
+    // تغيير العملة
+    document.getElementById('paypal_currency').addEventListener('change', function () {
+        renderPayPalButtons(this.value);
+    });
+
+
+    // =======================
+    // وظيفة تحويل العملات
+    async function convertCurrency() {
+        const amount = parseFloat(document.getElementById('convert_amount').value);
+        const from = document.getElementById('convert_from').value;
+        const to = document.getElementById('convert_to').value;
+        const resultElem = document.getElementById('convert_result');
+
+        if (!amount || amount <= 0) {
+            resultElem.textContent = "{{ 'Please enter a valid amount.' if session.get('lang') == 'en' else 'يرجى إدخال مبلغ صحيح.' }}";
+            return;
+        }
+        if (from === to) {
+            resultElem.textContent = "{{ 'Please select different currencies.' if session.get('lang') == 'en' else 'يرجى اختيار عملات مختلفة.' }}";
+            return;
+        }
+
+        resultElem.textContent = "{{ 'Converting...' if session.get('lang') == 'en' else 'جاري التحويل...' }}";
+
+        try {
+            const response = await fetch('/convert_currency', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ amount, from, to })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                resultElem.textContent = `{{ 'Converted amount:' if session.get('lang') == 'en' else 'المبلغ بعد التحويل:' }} ${data.converted_amount} ${to}
+                \n{{ 'Exchange rate:' if session.get('lang') == 'en' else 'سعر الصرف:' }} 1 ${from} = ${data.rate} ${to}`;
+            } else {
+                resultElem.textContent = `{{ 'Error:' if session.get('lang') == 'en' else 'خطأ:' }} ${data.message}`;
+            }
+        } catch (err) {
+            resultElem.textContent = `{{ 'Error fetching conversion.' if session.get('lang') == 'en' else 'حدث خطأ أثناء التحويل.' }}`;
+        }
+    }
+</script>
+
+</body>
+</html>

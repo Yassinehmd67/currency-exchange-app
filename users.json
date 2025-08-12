@@ -1,0 +1,303 @@
+{
+    "admin": {
+        "password": "admin123",
+        "balance": {
+            "USD": 1291.6099999999997,
+            "EUR": 0.5800000000000001,
+            "GBP": 0,
+            "CAD": 0,
+            "AUD": 0,
+            "JPY": 0,
+            "CHF": 0,
+            "MAD": 59.94000000000008,
+            "SAR": 0.0,
+            "EGP": 0,
+            "TND": 0,
+            "AED": 0
+        },
+        "transactions": [
+            {
+                "timestamp": "2025-08-03 11:21:32",
+                "type": "تحويل",
+                "from": "EUR",
+                "to": "USD",
+                "amount": 200.0,
+                "converted": 220.00000000000003
+            },
+            {
+                "timestamp": "2025-08-03 20:36:39",
+                "type": "تحويل من USD إلى SAR",
+                "amount": "20.0 → 20.00",
+                "currency": "SAR"
+            },
+            {
+                "timestamp": "2025-08-03 20:39:33",
+                "type": "تحويل من USD إلى SAR",
+                "amount": "20.0 → 20.00",
+                "currency": "SAR"
+            },
+            {
+                "timestamp": "2025-08-03 21:22:46",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "20.0 → 20.00",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-04 11:33:51",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.09",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-04 11:34:29",
+                "type": "تحويل من MAD إلى USD",
+                "amount": "29.09 → 3.18",
+                "currency": "USD"
+            },
+            {
+                "timestamp": "2025-08-04 11:34:54",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.09",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-04 14:59:45",
+                "type": "تحويل من USD إلى EUR",
+                "amount": "1.0 → 0.87",
+                "currency": "EUR"
+            },
+            {
+                "timestamp": "2025-08-04 15:50:58",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.09",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-04 15:51:22",
+                "type": "تحويل من SAR إلى MAD",
+                "amount": "40.0 → 96.99",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-04 15:52:21",
+                "type": "تحويل من EUR إلى USD",
+                "amount": "300.87 → 348.14",
+                "currency": "USD"
+            },
+            {
+                "timestamp": "2025-08-04 17:47:34",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "115.17 → 1047.18",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-05 01:53:37",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.07",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-05 01:54:08",
+                "type": "تحويل من MAD إلى USD",
+                "amount": "1171.0 → 129.04",
+                "currency": "USD"
+            },
+            {
+                "timestamp": "2025-08-05 01:54:40",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.07",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-05 12:47:03",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.07",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-05 12:47:47",
+                "type": "تحويل من USD إلى EUR",
+                "amount": "1.0 → 0.86",
+                "currency": "EUR"
+            },
+            {
+                "timestamp": "2025-08-05 12:48:16",
+                "type": "تحويل من USD إلى EUR",
+                "amount": "1.0 → 0.86",
+                "currency": "EUR"
+            },
+            {
+                "timestamp": "2025-08-05 12:48:32",
+                "type": "تحويل من EUR إلى MAD",
+                "amount": "1.0 → 10.5",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-05 12:48:53",
+                "type": "تحويل من MAD إلى USD",
+                "amount": "29.06 → 3.2",
+                "currency": "USD"
+            },
+            {
+                "timestamp": "2025-08-05 12:49:09",
+                "type": "تحويل من USD إلى EUR",
+                "amount": "1.0 → 0.86",
+                "currency": "EUR"
+            },
+            {
+                "timestamp": "2025-08-05 12:49:25",
+                "type": "تحويل من EUR إلى MAD",
+                "amount": "1.0 → 10.5",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-05 12:49:50",
+                "type": "📤 طلب سحب",
+                "amount": 1.0,
+                "currency": "USD",
+                "email": "orangehary@gmail.com"
+            },
+            {
+                "timestamp": "2025-08-05 16:20:49",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.07",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-05 16:21:09",
+                "type": "تحويل من MAD إلى USD",
+                "amount": "1.0 → 0.11",
+                "currency": "USD"
+            },
+            {
+                "timestamp": "2025-08-05 16:21:30",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.07",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-05 23:37:24",
+                "type": "📤 طلب سحب",
+                "amount": 1.0,
+                "currency": "MAD",
+                "email": "orangehary@gmail.com"
+            },
+            {
+                "timestamp": "2025-08-06 00:15:21",
+                "type": "📤 طلب سحب",
+                "amount": 1.0,
+                "currency": "MAD",
+                "email": "orangehary@gmail.com"
+            },
+            {
+                "timestamp": "2025-08-06 00:16:01",
+                "type": "📤 طلب سحب",
+                "amount": 1.0,
+                "currency": "MAD",
+                "email": "orangehary@gmail.com"
+            },
+            {
+                "timestamp": "2025-08-06 02:10:15",
+                "type": "تحويل من MAD إلى USD",
+                "amount": "1.0 → 0.11",
+                "currency": "USD"
+            },
+            {
+                "timestamp": "2025-08-06 02:10:31",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.09",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-06 13:01:13",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.09",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-07 00:50:43",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.07",
+                "currency": "MAD"
+            },
+            {
+                "timestamp": "2025-08-08 17:05:19",
+                "type": "تحويل من USD إلى MAD",
+                "amount": "1.0 → 9.05",
+                "currency": "MAD"
+            }
+        ],
+        "pending_withdrawals": [
+            {
+                "timestamp": "2025-08-03 11:22:06",
+                "amount": 200.0,
+                "currency": "USD",
+                "email": "orangehary@gmail.com"
+            },
+            {
+                "timestamp": "2025-08-03 18:50:14",
+                "amount": 20.0,
+                "currency": "USD",
+                "email": "orangehary@gmail.com"
+            },
+            {
+                "timestamp": "2025-08-05 12:49:50",
+                "amount": 1.0,
+                "currency": "USD",
+                "email": "orangehary@gmail.com"
+            },
+            {
+                "timestamp": "2025-08-05 23:37:24",
+                "amount": 1.0,
+                "currency": "MAD",
+                "email": "orangehary@gmail.com"
+            },
+            {
+                "timestamp": "2025-08-06 00:15:21",
+                "amount": 1.0,
+                "currency": "MAD",
+                "email": "orangehary@gmail.com"
+            },
+            {
+                "timestamp": "2025-08-06 00:16:01",
+                "amount": 1.0,
+                "currency": "MAD",
+                "email": "orangehary@gmail.com"
+            }
+        ]
+    },
+    "testuser": {
+        "password": "password",
+        "balance": {
+            "USD": 50,
+            "EUR": 0,
+            "GBP": 0,
+            "CAD": 0,
+            "AUD": 0,
+            "JPY": 0,
+            "CHF": 0,
+            "MAD": 0,
+            "SAR": 0,
+            "EGP": 0,
+            "TND": 0,
+            "AED": 0
+        },
+        "transactions": [
+            {
+                "timestamp": "2025-08-01 12:00:00",
+                "type": "💳 شحن PayPal (حقيقي)",
+                "amount": 50,
+                "currency": "USD",
+                "email": "payer@example.com"
+            }
+        ],
+        "pending_withdrawals": [
+            {
+                "timestamp": "2025-08-01 12:45:00",
+                "amount": 25,
+                "currency": "USD",
+                "email": "userpaypal@example.com"
+            }
+        ]
+    }
+}

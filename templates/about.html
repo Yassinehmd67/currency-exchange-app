@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="{{ session.get('lang', 'ar') }}">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ 'About the App' if session.get('lang') == 'en' else 'معلومات حول التطبيق' }}</title>
+    <style>
+        body {
+            font-family: 'Cairo', sans-serif;
+            background-color: #f4f6f8;
+            margin: 0;
+            padding: 0;
+            direction: {{ 'rtl' if session.get('lang', 'ar') == 'ar' else 'ltr' }};
+        }
+        .info-box {
+            max-width: 800px;
+            margin: 50px auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        h2 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 20px;
+        }
+        ul {
+            line-height: 2;
+            font-size: 18px;
+        }
+        a {
+            display: block;
+            text-align: center;
+            margin-top: 30px;
+            text-decoration: none;
+            color: #3498db;
+            font-weight: bold;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+<div class="info-box">
+    <h2>{{ 'About the App' if session.get('lang') == 'en' else 'معلومات حول التطبيق' }}</h2>
+
+    {% if session.get('lang') == 'en' %}
+        <ul>
+            <li>PayPal charges a commission of about 3% on transfers.</li>
+            <li>This application only deducts 1% commission from your withdrawals.</li>
+            <li>All payments are processed within 20 minutes to 12 hours, depending on the currency.</li>
+            <li>The larger the withdrawal amount, the lower the PayPal commission rate (relatively).</li>
+            <li>PayPal fees may vary depending on the country of the user.</li>
+        </ul>
+    {% else %}
+        <ul>
+            <li>يقوم بايبال بخصم عمولة تقدر بحوالي 3٪ عند التحويل.</li>
+            <li>التطبيق يخصم فقط 1٪ من المبلغ المسحوب كعمولة.</li>
+            <li>يتم معالجة المدفوعات خلال مدة تتراوح بين 20 دقيقة إلى 12 ساعة، حسب العملة المختارة.</li>
+            <li>كلما كان المبلغ المسحوب كبيرًا، كانت عمولة بايبال أقل نسبيًا.</li>
+            <li>تختلف نسبة عمولة بايبال حسب البلد الذي ينتمي إليه المستخدم.</li>
+        </ul>
+    {% endif %}
+
+    <a href="{{ url_for('index') }}">{{ '⬅️ Back to Dashboard' if session.get('lang') == 'en' else '⬅️ العودة إلى لوحة التحكم' }}</a>
+</div>
+
+</body>
+</html>

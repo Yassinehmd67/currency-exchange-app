@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <title>طلبات السحب</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body {
+            direction: rtl;
+            background-color: #f5f5f5;
+        }
+
+        .admin-container {
+            max-width: 900px;
+            margin: 40px auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        h2 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #2c3e50;
+        }
+
+        .withdrawal-item {
+            padding: 15px;
+            margin-bottom: 15px;
+            background: #f9f9f9;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
+
+        .withdrawal-item form {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .withdrawal-item input {
+            background: transparent;
+            border: none;
+            font-weight: bold;
+            width: auto;
+        }
+
+        .withdrawal-item button {
+            padding: 8px 16px;
+            background-color: #2ecc71;
+            border: none;
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .withdrawal-item button:hover {
+            background-color: #27ae60;
+        }
+
+        .flash {
+            text-align: center;
+            margin-bottom: 10px;
+        }
+
+        .back-link {
+            display: block;
+            text-align: center;
+            margin-top: 20px;
+            color: #e74c3c;
+            text-decoration: none;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <h2>📤 طلبات السحب في الانتظار</h2>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <p class="{{ category }} flash">{{ message }}</p>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        {% for w in withdrawals %}
+            <div class="withdrawal-item">
+                <form action="{{ url_for('admin_withdrawals') }}" method="POST">
+                    <input type="hidden" name="username" value="{{ w.username }}">
+                    <input type="hidden" name="email" value="{{ w.email }}">
+                    <input type="hidden" name="amount" value="{{ w.amount }}">
+                    <input type="hidden" name="currency" value="{{ w.currency }}">
+                    <input type="hidden" name="timestamp" value="{{ w.timestamp }}">
+                    
+                    👤 المستخدم: <strong>{{ w.username }}</strong> |
+                    💰 المبلغ: <strong>{{ w.amount }} {{ w.currency }}</strong> |
+                    📧 البريد: <strong>{{ w.email }}</strong> |
+                    🕒 الوقت: <strong>{{ w.timestamp }}</strong>
+
+                    <button type="submit">✅ تنفيذ السحب</button>
+                </form>
+            </div>
+        {% else %}
+            <p style="text-align: center;">لا توجد طلبات حالياً.</p>
+        {% endfor %}
+
+        <a href="{{ url_for('dashboard') }}" class="back-link">🔙 العودة للوحة التحكم</a>
+    </div>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="{{ session.get('lang', 'ar') }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ t('admin_panel') }}</title>
+  <style>
+    body { font-family: 'Cairo', system-ui, sans-serif; margin:0; padding:20px; background:#fbfbfb;
+           direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }}; }
+    h1, h2 { margin: 8px 0; }
+    section { background:#fff; border:1px solid #eee; border-radius:12px; padding:16px; margin-bottom:16px; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th, td { border:1px solid #eee; padding:8px; text-align:center; }
+    th { background:#f7f7f7; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+    a { color:#3498db; text-decoration:none; }
+    .topbar { margin-bottom:16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; background:#f0f3f6; }
+    .pagination { display:flex; gap:8px; justify-content:center; margin-top:12px; }
+    form.filters { display:grid; grid-template-columns: repeat(5, 1fr); gap:8px; align-items:end; }
+    input,select,button{padding:8px;border:1px solid #ddd;border-radius:8px}
+    button{cursor:pointer}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a href="{{ url_for('index') }}">🏠 {{ t('home') }}</a>
+    <a href="{{ url_for('admin_withdrawals') }}">💸 {{ t('withdrawals') }}</a>
+    <a href="{{ url_for('logout') }}">🔓 {{ t('logout') }}</a>
+  </div>
+
+  <h1>{{ t('admin_panel') }}</h1>
+
+  <section>
+    <h2>{{ t('filters') }}</h2>
+    <form class="filters" method="GET" action="{{ url_for('admin_overview') }}">
+      <div>
+        <label>{{ t('user') }}</label>
+        <input type="text" name="username" value="{{ username_f or '' }}" placeholder="username">
+      </div>
+      <div>
+        <label>{{ t('currency') }}</label>
+        <input type="text" name="currency" value="{{ currency_f or '' }}" placeholder="USD">
+      </div>
+      <div>
+        <label>{{ t('start_date') }}</label>
+        <input type="date" name="start_date" value="{{ start_date or '' }}">
+      </div>
+      <div>
+        <label>{{ t('end_date') }}</label>
+        <input type="date" name="end_date" value="{{ end_date or '' }}">
+      </div>
+      <div>
+        <button type="submit">{{ t('apply') }}</button>
+      </div>
+    </form>
+    <div class="topbar" style="margin-top:8px;">
+      <a href="{{ url_for('export_transactions_csv', username=username_f, currency=currency_f, start_date=start_date, end_date=end_date) }}">⬇️ {{ t('export_transactions_csv') }}</a>
+      <a href="{{ url_for('export_balances_csv', username=username_f) }}">⬇️ {{ t('export_balances_csv') }}</a>
+    </div>
+  </section>
+
+  <section>
+    <h2>{{ t('totals') }}</h2>
+    <table>
+      <thead><tr><th>{{ t('currency') }}</th><th>الإجمالي</th></tr></thead>
+      <tbody>
+        {% for trow in totals %}
+        <tr><td>{{ trow.currency }}</td><td>{{ '%.2f'|format(trow.total or 0) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <div class="row">
+    <section>
+      <h2>{{ t('users') }}</h2>
+      <table>
+        <thead><tr><th>{{ t('user') }}</th><th>الدور</th></tr></thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td>{{ u.username }}</td>
+            <td><span class="pill">{{ 'Admin' if u.is_admin else 'User' }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>{{ t('balances') }}</h2>
+      <table>
+        <thead><tr><th>{{ t('user') }}</th><th>{{ t('currency') }}</th><th>الرصيد</th></tr></thead>
+        <tbody>
+          {% for b in balances %}
+          <tr>
+            <td>{{ b.username }}</td>
+            <td>{{ b.currency }}</td>
+            <td>{{ '%.2f'|format(b.amount) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <section>
+    <h2>{{ t('recent_transactions') }}</h2>
+    <table>
+      <thead><tr><th>{{ t('user') }}</th><th>⏰</th><th>النوع</th><th>القيمة</th><th>{{ t('currency') }}</th></tr></thead>
+      <tbody>
+        {% for tr in transactions %}
+        <tr>
+          <td>{{ tr.username }}</td>
+          <td>{{ tr.timestamp }}</td>
+          <td>{{ tr.type }}</td>
+          <td>{{ tr.amount }}</td>
+          <td>{{ tr.currency }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="pagination">
+      {% if prev_page %}<a href="{{ url_for('admin_overview', page=prev_page, username=username_f, currency=currency_f, start_date=start_date, end_date=end_date) }}">⬅️ {{ t('previous') }}</a>{% endif %}
+      <span>{{ t('page') }} {{ page }} / {{ total_pages }}</span>
+      {% if next_page %}<a href="{{ url_for('admin_overview', page=next_page, username=username_f, currency=currency_f, start_date=start_date, end_date=end_date) }}">{{ t('next') }} ➡️</a>{% endif %}
+    </div>
+  </section>
+</body>
+</html>

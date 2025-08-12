@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="{{ session.get('lang','ar') }}">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>تسجيل حساب</title>
+  <style>
+    body{font-family:system-ui,"Cairo",sans-serif;background:#f2f5f8;
+         direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};}
+    .box{max-width:420px;margin:8vh auto;background:#fff;border:1px solid #eee;border-radius:14px;padding:18px}
+    label{display:block;margin:6px 0 4px} input{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px}
+    button{padding:10px 14px;border:1px solid #111;background:#111;color:#fff;border-radius:8px;margin-top:10px;cursor:pointer}
+    a{text-decoration:none;color:#06c}
+  </style>
+</head>
+<body>
+<div class="box">
+  <h2>تسجيل حساب</h2>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat,msg in messages %}<div>{{ msg }}</div>{% endfor %}
+  {% endwith %}
+  <form method="POST" action="{{ url_for('register') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>اسم المستخدم</label>
+    <input name="username" required>
+    <label>كلمة المرور</label>
+    <input type="password" name="password" required>
+    <button type="submit">تسجيل</button>
+  </form>
+  <p>لديك حساب؟ <a href="{{ url_for('login') }}">دخول</a></p>
+</div>
+</body>
+</html>
