@@ -141,6 +141,18 @@ SUPPORTED_CURRENCIES = ["USD", "EUR", "GBP", "MAD", "AED", "SAR"]
 RATES_CACHE_FILE = 'rates_cache.json'
 RATES_TTL_SEC = 12 * 60 * 60  # 12 ساعة
 
+def ensure_user_balances(username: str):
+    """يضمن وجود صف رصيد لكل عملة مدعومة لهذا المستخدم (مفيد لبيئات بدون قرص دائم مثل Render)."""
+    if not username:
+        return
+    with get_db() as db:
+        for cur in SUPPORTED_CURRENCIES:
+            db.execute("""
+                INSERT OR IGNORE INTO balances (username, currency, amount)
+                VALUES (?, ?, 0.0)
+            """, (username, cur))
+        db.commit()
+
 def parse_amount(value, *, min_value=0.0, max_value=1_000_000.0):
     try:
         amt = float(value)
@@ -280,6 +292,8 @@ def login():
             if row and check_password_hash(row["password_hash"], password):
                 session['username'] = username
                 session['is_admin'] = bool(row['is_admin'])
+                # يضمن ظهور العملات حتى في قواعد بيانات جديدة على Render
+                ensure_user_balances(username)
                 return redirect(url_for('index'))
             flash("❌ اسم المستخدم أو كلمة المرور غير صحيح", 'error')
     return render_template('login.html')
@@ -297,6 +311,10 @@ def logout():
 def index():
     if 'username' not in session:
         return redirect(url_for('login'))
+
+    # شبكة أمان لإظهار العملات دائمًا (خاصة على Render)
+    ensure_user_balances(session['username'])
+
     with get_db() as db:
         bals = db.execute("SELECT currency, amount FROM balances WHERE username=?", (session['username'],)).fetchall()
         txs = db.execute("SELECT timestamp, type, amount, currency FROM transactions WHERE username=? ORDER BY id DESC LIMIT 50",
@@ -356,6 +374,7 @@ def convert_balance():
 # Binance Pay: إنشاء طلب + العودة + استعلام الحالة
 # -----------------------------------
 @app.route('/binance/create_order', methods=['POST'])
+@csrf.exempt  # إعفاء لأن الطلب يُرسل عبر fetch JSON بدون تضمين رمز CSRF
 def binance_create_order():
     if 'username' not in session:
         return jsonify({'ok': False, 'error': 'auth'}), 401
@@ -704,4 +723,3 @@ def health():
 init_db()
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-
