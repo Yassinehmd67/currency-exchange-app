@@ -2,7 +2,7 @@
 <html lang="{{ session.get('lang','ar') }}">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>تسجيل الدخول</title>
+  <title>{{ t('login') }}</title>
   <style>
     body{font-family:system-ui,"Cairo",sans-serif;background:#f2f5f8;
          direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};}
@@ -14,19 +14,19 @@
 </head>
 <body>
 <div class="box">
-  <h2>تسجيل الدخول</h2>
+  <h2>{{ t('login') }}</h2>
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for cat,msg in messages %}<div>{{ msg }}</div>{% endfor %}
   {% endwith %}
   <form method="POST" action="{{ url_for('login') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>اسم المستخدم</label>
+    <label>{{ t('username') }}</label>
     <input name="username" required>
-    <label>كلمة المرور</label>
+    <label>{{ t('password') }}</label>
     <input type="password" name="password" required>
-    <button type="submit">دخول</button>
+    <button type="submit">{{ t('login') }}</button>
   </form>
-  <p>ليس لديك حساب؟ <a href="{{ url_for('register') }}">تسجيل</a></p>
+  <p>{{ t('no_account') }} <a href="{{ url_for('register') }}">{{ t('register') }}</a></p>
 </div>
 </body>
 </html>

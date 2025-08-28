@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>لوحة المستخدم</title>
+  <title>{{ t('user_dashboard') }}</title>
   <style>
     body{font-family:system-ui,"Cairo",sans-serif;margin:0;background:#f7f7f9;
          direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};}
@@ -36,18 +36,18 @@
 <body>
 <header>
   <div class="top-links">
-    <a href="{{ url_for('index') }}">🏠 {{ t('home') if t else 'الرئيسية' }}</a>
+    <a href="{{ url_for('index') }}">🏠 {{ t('home') }}</a>
     {% if session.get('is_admin') %}
-      <a href="{{ url_for('admin_overview') }}">🛡️ {{ t('admin_panel') if t else 'لوحة الإدارة' }}</a>
-      <a href="{{ url_for('admin_withdrawals') }}">💸 {{ t('withdrawals') if t else 'طلبات السحب' }}</a>
+      <a href="{{ url_for('admin_overview') }}">🛡️ {{ t('admin_panel') }}</a>
+      <a href="{{ url_for('admin_withdrawals') }}">💸 {{ t('withdrawals') }}</a>
     {% endif %}
   </div>
   <div class="top-links">
     <span class="lang">
-      <a href="{{ url_for('set_lang', lang='ar', next=request.full_path) }}">{{ t('arabic') if t else 'العربية' }}</a> |
-      <a href="{{ url_for('set_lang', lang='en', next=request.full_path) }}">{{ t('english') if t else 'الإنجليزية' }}</a>
+      <a href="{{ url_for('set_lang', lang='ar', next=request.full_path) }}">{{ t('arabic') }}</a> |
+      <a href="{{ url_for('set_lang', lang='en', next=request.full_path) }}">{{ t('english') }}</a>
     </span>
-    <a href="{{ url_for('logout') }}">🔓 {{ t('logout') if t else 'تسجيل الخروج' }}</a>
+    <a href="{{ url_for('logout') }}">🔓 {{ t('logout') }}</a>
   </div>
 </header>
 
@@ -65,33 +65,33 @@
   <div class="grid">
     <!-- الرصيد -->
     <section class="card">
-      <h2>💰 أرصدة حسابك</h2>
+      <h2>💰 {{ t('your_balances') }}</h2>
       <table>
-        <thead><tr><th>العملة</th><th>الرصيد</th></tr></thead>
+        <thead><tr><th>{{ t('currency') }}</th><th>{{ t('balance') }}</th></tr></thead>
         <tbody>
           {% for cur,amt in (balances or {}).items() %}
           <tr><td>{{ cur }}</td><td>{{ '%.2f'|format(amt) }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
-      <p class="muted">طلبات السحب المعلقة: {{ pending_withdrawals_count or 0 }}</p>
+      <p class="muted">{{ t('pending_withdrawals_count') }}: {{ pending_withdrawals_count or 0 }}</p>
     </section>
 
     <!-- معاملات أخيرة -->
     <section class="card">
-      <h2>📜 المعاملات الأخيرة</h2>
+      <h2>📜 {{ t('recent_transactions') }}</h2>
       <table>
-        <thead><tr><th>الوقت</th><th>النوع</th><th>القيمة</th><th>العملة</th></tr></thead>
+        <thead><tr><th>{{ t('time') }}</th><th>{{ t('type') }}</th><th>{{ t('amount') }}</th><th>{{ t('currency') }}</th></tr></thead>
         <tbody>
-          {% for t in transactions %}
+          {% for trow in transactions %}
           <tr>
-            <td>{{ t.timestamp }}</td>
-            <td>{{ t.type }}</td>
-            <td>{{ t.amount }}</td>
-            <td>{{ t.currency }}</td>
+            <td>{{ trow.timestamp }}</td>
+            <td>{{ trow.type }}</td>
+            <td>{{ trow.amount }}</td>
+            <td>{{ trow.currency }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="4" class="muted">لا توجد معاملات بعد</td></tr>
+          <tr><td colspan="4" class="muted">{{ t('no_transactions_yet') }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -100,88 +100,88 @@
 
   <!-- تحويل بين العملات -->
   <section class="card">
-    <h2>🔁 تحويل رصيد بين العملات</h2>
+    <h2>🔁 {{ t('convert_between_currencies') }}</h2>
     <form method="POST" action="{{ url_for('convert_balance') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row">
         <div>
-          <label>من</label>
+          <label>{{ t('from') }}</label>
           <select name="from_currency" required>
             {% for cur in supported %}<option value="{{ cur }}">{{ cur }}</option>{% endfor %}
           </select>
         </div>
         <div>
-          <label>إلى</label>
+          <label>{{ t('to') }}</label>
           <select name="to_currency" required>
             {% for cur in supported %}<option value="{{ cur }}">{{ cur }}</option>{% endfor %}
           </select>
         </div>
         <div>
-          <label>المبلغ</label>
+          <label>{{ t('amount') }}</label>
           <input type="number" name="amount" min="0" step="0.01" required>
         </div>
       </div>
       <div style="margin-top:10px">
-        <button type="submit">تحويل</button>
+        <button type="submit">{{ t('convert') }}</button>
       </div>
     </form>
   </section>
 
   <!-- شحن عبر Binance Pay فقط -->
   <section class="card">
-    <h2>🟡 Binance Pay شحن الرصيد (USDT / BTC)</h2>
+    <h2>🟡 {{ t('binance_pay_topup_title') }}</h2>
     {% if not binance_enabled %}
-      <div class="warn">⚠️ لم يتم ضبط مفاتيح Binance Pay. أضف <code>BINANCE_API_KEY</code> و<code>BINANCE_API_SECRET</code> في <code>.env</code>.</div>
+      <div class="warn">⚠️ {{ t('binance_not_configured_warn') }}</div>
     {% endif %}
     <div class="split">
       <form class="row" onsubmit="return false">
         <div>
-          <label>العملة الرقمية</label>
+          <label>{{ t('crypto_currency') }}</label>
           <select id="bp_crypto">
             <option value="USDT">USDT</option>
             <option value="BTC">BTC</option>
           </select>
         </div>
         <div>
-          <label>المبلغ المراد دفعه</label>
+          <label>{{ t('amount_to_pay') }}</label>
           <input type="number" id="bp_amount" min="0.5" step="0.00000001" required>
         </div>
       </form>
       <div>
-        <span class="badge">الدفع على صفحة Binance الآمنة</span>
+        <span class="badge">{{ t('secure_payment_on_binance') }}</span>
         <div class="btns" style="margin-top:10px">
-          <button id="binance-pay" type="button" class="btn-plain" {{ 'disabled' if not binance_enabled else '' }}>🟡 ادفع عبر Binance Pay</button>
+          <button id="binance-pay" type="button" class="btn-plain" {{ 'disabled' if not binance_enabled else '' }}>🟡 {{ t('pay_with_binance_pay') }}</button>
         </div>
-        <p class="muted">بعد الدفع ستعود تلقائيًا للموقع، وسيُضاف الرصيد بالدولار (USDT≈USD، وBTC يُحوّل بسعر لحظي).</p>
+        <p class="muted">{{ t('after_payment_note') }}</p>
       </div>
     </div>
   </section>
 
   <!-- طلب سحب يدوي -->
   <section class="card">
-    <h2>💸 طلب سحب</h2>
+    <h2>💸 {{ t('withdraw_request') }}</h2>
     <form method="POST" action="{{ url_for('withdraw') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="row">
         <div>
-          <label>المبلغ</label>
+          <label>{{ t('amount') }}</label>
           <input type="number" name="withdraw_amount" min="1" step="0.01" required>
         </div>
         <div>
-          <label>العملة</label>
+          <label>{{ t('currency') }}</label>
           <select name="withdraw_currency" required>
             {% for cur in supported %}<option value="{{ cur }}">{{ cur }}</option>{% endfor %}
           </select>
         </div>
         <div>
-          <label>بريد جهة السحب (مثال: PayPal أو بنك)</label>
+          <label>{{ t('payout_email_placeholder') }}</label>
           <input type="email" name="paypal_email" placeholder="you@example.com" required>
         </div>
       </div>
       <div style="margin-top:10px">
-        <button type="submit">إرسال طلب السحب</button>
+        <button type="submit">{{ t('send_withdraw_request') }}</button>
       </div>
-      <p class="muted">سيتم معالجة السحب يدويًا بعد التحقق.</p>
+      <p class="muted">{{ t('withdraw_manual_note') }}</p>
     </form>
   </section>
 </main>
@@ -192,9 +192,6 @@
   const amtInput = document.getElementById('bp_amount');
   const cryptoSel = document.getElementById('bp_crypto');
 
-  // اجلب توكن CSRF من السيرفر عبر Jinja
-  const CSRF = "{{ csrf_token() }}";
-
   function getAmount(){
     const v = parseFloat(amtInput.value || '0');
     return (isFinite(v) && v > 0) ? v.toFixed(8) : null;
@@ -202,43 +199,24 @@
 
   bpBtn?.addEventListener('click', async () => {
     const amount = getAmount();
-    if (!amount){ alert('يرجى إدخال مبلغ صحيح (> 0)'); return; }
-    if (bpBtn.disabled) return;
-
-    const old = bpBtn.textContent;
-    bpBtn.disabled = true;
-    bpBtn.textContent = '⏳ جاري إنشاء الطلب...';
-
+    if (!amount){ alert('{{ t("enter_valid_amount") }}'); return; }
+    bpBtn.disabled = true; const old = bpBtn.textContent; bpBtn.textContent = '⏳ {{ t("creating_order") }}';
     try{
       const res = await fetch("{{ url_for('binance_create_order') }}", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRFToken": CSRF         // ← مهم جدًا
-        },
-        credentials: "same-origin",   // تأكد من إرسال الكوكي
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ amount: parseFloat(amount), crypto: cryptoSel.value })
       });
-
-      const data = await res.json().catch(()=> ({}));
-
-if (!res.ok || !data.ok) {
-  const code = data?.error || (res.status + "");
-  const extra = data?.detail ? "\n" + JSON.stringify(data.detail) : "";
-  alert(`تعذر إنشاء طلب Binance Pay.\nError: ${code}${extra}`);
-  bpBtn.disabled = false; bpBtn.textContent = old;
-  return;
-}
+      const data = await res.json();
       if (!data.ok || !data.url){
-        alert('تعذر إنشاء طلب Binance Pay.');
+        console.error('Binance create order error:', data);
+        alert('{{ t("binance_create_failed") }}');
         bpBtn.disabled = false; bpBtn.textContent = old;
         return;
       }
-
-      window.location = data.url; // التحويل لبوابة الدفع على Binance
+      window.location = data.url; // الدفع على Binance
     }catch(e){
-      console.error(e);
-      alert('خطأ في الشبكة أثناء بدء الدفع.');
+      alert('{{ t("network_error_start_payment") }}');
       bpBtn.disabled = false; bpBtn.textContent = old;
     }
   });
