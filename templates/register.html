@@ -2,31 +2,130 @@
 <html lang="{{ session.get('lang','ar') }}">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>تسجيل حساب</title>
+  <title>{{ t('register') if t else 'تسجيل حساب' }}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700&display=swap" rel="stylesheet">
   <style>
-    body{font-family:system-ui,"Cairo",sans-serif;background:#f2f5f8;
+    body{font-family:"Cairo",system-ui,sans-serif;background:#f2f5f8;
          direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};}
-    .box{max-width:420px;margin:8vh auto;background:#fff;border:1px solid #eee;border-radius:14px;padding:18px}
-    label{display:block;margin:6px 0 4px} input{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px}
+    .box{max-width:460px;margin:8vh auto;background:#fff;border:1px solid #eee;border-radius:14px;padding:18px}
+    label{display:block;margin:6px 0 4px}
+    input{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px}
     button{padding:10px 14px;border:1px solid #111;background:#111;color:#fff;border-radius:8px;margin-top:10px;cursor:pointer}
     a{text-decoration:none;color:#06c}
+    .row{display:grid;grid-template-columns:1fr;gap:10px}
+    .muted{opacity:.85;font-size:12px}
+    .msg{margin:8px 0;padding:8px;border-radius:8px;font-size:14px}
+    .msg.ok{background:#eafaf1;border:1px solid #c7eed8;color:#1e7e34}
+    .msg.err{background:#fdecea;border:1px solid #f5c6cb;color:#a71d2a}
+    .pw-wrap{position:relative}
+    .toggle-pw{position:absolute;top:50%;transform:translateY(-50%);
+               {{ 'left:10px' if session.get('lang','ar')=='ar' else 'right:10px' }};
+               background:transparent;border:none;cursor:pointer;opacity:.7}
+    .strength{height:8px;border-radius:999px;background:#eee;margin-top:6px;overflow:hidden}
+    .strength > i{display:block;height:100%;width:0;background:#e74c3c;transition:width .25s ease, background .25s ease}
+    .terms{display:flex;gap:8px;align-items:flex-start;margin-top:8px}
   </style>
 </head>
 <body>
 <div class="box">
-  <h2>تسجيل حساب</h2>
+  <h2>{{ t('register') if t else 'تسجيل حساب' }}</h2>
+
   {% with messages = get_flashed_messages(with_categories=true) %}
-    {% for cat,msg in messages %}<div>{{ msg }}</div>{% endfor %}
+    {% if messages %}
+      <div aria-live="polite">
+        {% for cat,msg in messages %}
+          <div class="msg {{ 'ok' if cat=='success' else 'err' if cat in ['error','danger'] else '' }}">{{ msg }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
   {% endwith %}
-  <form method="POST" action="{{ url_for('register') }}">
+
+  <form method="POST" action="{{ url_for('register') }}"
+        onsubmit="this.querySelector('button[type=submit]').disabled=true">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>اسم المستخدم</label>
-    <input name="username" required>
-    <label>كلمة المرور</label>
-    <input type="password" name="password" required>
-    <button type="submit">تسجيل</button>
+
+    <div class="row">
+      <div>
+        <label for="username">{{ t('username') if t else 'اسم المستخدم' }}</label>
+        <input id="username" name="username" required maxlength="32"
+               pattern="[A-Za-z0-9_\.]{3,32}"
+               title="3–32 حروف/أرقام/نقطة/شرطة سفلية"
+               autocomplete="username" inputmode="latin">
+        <div class="muted">{{ t('username_rules') if t else '3–32 حرفًا: أحرف/أرقام/._ فقط' }}</div>
+      </div>
+
+      <div>
+        <label for="email">{{ t('email') if t else 'البريد الإلكتروني (اختياري)' }}</label>
+        <input id="email" type="email" name="email" autocomplete="email" placeholder="you@example.com">
+      </div>
+
+      <div>
+        <label for="password">{{ t('password') if t else 'كلمة المرور' }}</label>
+        <div class="pw-wrap">
+          <input id="password" type="password" name="password" required minlength="8" maxlength="128"
+                 autocomplete="new-password" aria-describedby="pwHelp">
+          <button type="button" class="toggle-pw" aria-label="إظهار/إخفاء كلمة المرور"
+                  onclick="const p=document.getElementById('password'); p.type=(p.type==='password')?'text':'password'">👁️</button>
+        </div>
+        <div id="pwHelp" class="muted">{{ t('password_rules') if t else 'على الأقل 8 أحرف، ويفضل مزيج حروف كبيرة/صغيرة وأرقام ورموز.' }}</div>
+        <div class="strength" aria-hidden="true"><i id="bar"></i></div>
+      </div>
+
+      <div>
+        <label for="password2">{{ t('confirm_password') if t else 'تأكيد كلمة المرور' }}</label>
+        <input id="password2" type="password" name="password2" required autocomplete="new-password">
+      </div>
+
+      <label class="terms">
+        <input type="checkbox" name="agree" required>
+        <span class="muted">{{ t('agree_terms') if t else 'أوافق على الشروط وسياسة الخصوصية' }}</span>
+      </label>
+    </div>
+
+    <button type="submit">{{ t('register') if t else 'تسجيل' }}</button>
   </form>
-  <p>لديك حساب؟ <a href="{{ url_for('login') }}">دخول</a></p>
+
+  <p class="muted" style="margin-top:10px">
+    {{ t('have_account_q') if t else 'لديك حساب؟' }}
+    <a href="{{ url_for('login') }}">{{ t('login') if t else 'دخول' }}</a>
+  </p>
 </div>
+
+<script>
+  // مقياس قوة كلمة المرور (تقريبي)
+  const pw = document.getElementById('password');
+  const bar = document.getElementById('bar');
+  function score(s){
+    let n=0;
+    if(!s) return 0;
+    if(s.length>=8) n+=1;
+    if(/[A-Z]/.test(s)) n+=1;
+    if(/[a-z]/.test(s)) n+=1;
+    if(/[0-9]/.test(s)) n+=1;
+    if(/[^A-Za-z0-9]/.test(s)) n+=1;
+    return n; // 0..5
+  }
+  pw && pw.addEventListener('input', ()=>{
+    const sc = score(pw.value);
+    const pct = (sc*20)+'%';
+    bar.style.width = pct;
+    bar.style.background = sc>=4 ? '#2ecc71' : sc>=3 ? '#f39c12' : '#e74c3c';
+  });
+
+  // تحقق مطابقـة كلمتي المرور قبل الإرسال
+  const form = document.querySelector('form');
+  form && form.addEventListener('submit', (e)=>{
+    const p1 = document.getElementById('password').value;
+    const p2 = document.getElementById('password2').value;
+    if(p1 !== p2){
+      e.preventDefault();
+      alert('{{ t("passwords_not_match") if t else "كلمتا المرور غير متطابقتين" }}');
+      form.querySelector('button[type=submit]').disabled=false;
+    }
+  });
+
+  // أمان بسيط: إعادة إخفاء كلمة المرور عند فقد التركيز
+  pw && pw.addEventListener('blur', ()=>{ if(pw.type==='text'){ pw.type='password'; } });
+</script>
 </body>
 </html>

@@ -35,6 +35,15 @@ BINANCE_HOST = 'https://bpay.binanceapi.com'
 # حماية CSRF
 csrf = CSRFProtect(app)
 
+# إعدادات جلسة/كوكي وCSRF إضافية
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE=os.getenv("SESSION_COOKIE_SAMESITE", "Lax"),
+    SESSION_COOKIE_SECURE=bool(int(os.getenv("SESSION_COOKIE_SECURE", "0"))),  # اجعلها 1 في الإنتاج مع HTTPS
+    PERMANENT_SESSION_LIFETIME=60*60*24*7,
+    WTF_CSRF_HEADERS=['X-CSRFToken', 'X-CSRF-Token'],
+)
+
 # تسجيل
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
@@ -158,7 +167,13 @@ def get_exchange_rate(from_currency, to_currency):
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        rate = float(data["conversion_rates"][to_currency])
+
+        rates = data.get("conversion_rates") or {}
+        if to_currency not in rates:
+            logging.warning("conversion_rates missing target currency: %s", to_currency)
+            return None
+        rate = float(rates[to_currency])
+
         # كتابة الكاش
         try:
             cache = {}
@@ -197,7 +212,8 @@ def _binance_sign_headers(body: dict):
         "BinancePay-Timestamp": ts,
         "BinancePay-Nonce": nonce,
         "BinancePay-Certificate-SN": BINANCE_API_KEY,
-        "BinancePay-Signature": signature
+        "BinancePay-Signature": signature,
+        "BinancePay-Signature-Type": "SHA512",   # مهم لبعض الإعدادات
     }
     return headers, body_json
 
@@ -208,8 +224,16 @@ def _binance_post(path: str, body: dict):
     headers, body_json = hb
     url = f"{BINANCE_HOST}{path}"
     r = requests.post(url, headers=headers, data=body_json, timeout=15)
-    r.raise_for_status()
-    return r.json()
+
+    # أعد JSON حتى مع حالات != 200 لتشخيص أوضح
+    try:
+        data = r.json()
+    except Exception:
+        data = {"status_code": r.status_code, "text": r.text}
+
+    if r.status_code != 200:
+        logging.error("Binance HTTP %s: %s", r.status_code, data)
+    return data, r.status_code
 
 def _get_btc_usd():
     try:
@@ -332,7 +356,6 @@ def convert_balance():
 # Binance Pay: إنشاء طلب + العودة + استعلام الحالة
 # -----------------------------------
 @app.route('/binance/create_order', methods=['POST'])
-@csrf.exempt
 def binance_create_order():
     if 'username' not in session:
         return jsonify({'ok': False, 'error': 'auth'}), 401
@@ -368,9 +391,9 @@ def binance_create_order():
     }
 
     try:
-        res = _binance_post("/binancepay/openapi/v3/order", body)
-        if not (res.get("status") == "SUCCESS" and res.get("code") == "000000"):
-            logging.error("Binance create order failed: %s", res)
+        res, http_status = _binance_post("/binancepay/openapi/v3/order", body)
+        if not (isinstance(res, dict) and res.get("status") == "SUCCESS" and res.get("code") == "000000"):
+            logging.error("Binance create order failed (HTTP %s): %s", http_status, res)
             return jsonify({'ok': False, 'error': 'binance_fail', 'detail': res}), 502
 
         data_obj = res.get("data") or {}
@@ -388,7 +411,7 @@ def binance_create_order():
         return jsonify({'ok': True, 'url': checkout_url})
     except Exception as e:
         logging.exception("Binance create order exception: %s", e)
-        return jsonify({'ok': False, 'error': 'exception'}), 500
+        return jsonify({'ok': False, 'error': 'exception', 'detail': str(e)}), 500
 
 @app.route('/binance/return', methods=['GET'])
 def binance_return():
@@ -404,8 +427,9 @@ def binance_return():
         return redirect(url_for('index'))
 
     try:
-        res = _binance_post("/binancepay/openapi/v2/order/query", {"merchantTradeNo": trade_no})
-        if not (res.get("status") == "SUCCESS" and res.get("code") == "000000"):
+        res, http_status = _binance_post("/binancepay/openapi/v2/order/query", {"merchantTradeNo": trade_no})
+        if not (isinstance(res, dict) and res.get("status") == "SUCCESS" and res.get("code") == "000000"):
+            logging.error("Binance order query failed (HTTP %s): %s", http_status, res)
             flash('تعذر التحقق من حالة الدفع.', 'error')
             return redirect(url_for('index'))
 
@@ -593,11 +617,91 @@ def admin_overview():
                            page=page, total_pages=total_pages, prev_page=prev_page, next_page=next_page,
                            username_f=username_f, currency_f=currency_f, start_date=start_date, end_date=end_date)
 
+# ======= (مُضاف) تصدير CSV =======
+@app.route('/admin/export/transactions.csv')
+def export_transactions_csv():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    if not session.get('is_admin') and session.get('username') != (os.getenv('ADMIN_USERNAME') or ''):
+        flash("غير مصرح.", "error")
+        return redirect(url_for('index'))
+
+    import csv, io
+    username_f = (request.args.get('username') or '').strip()
+    currency_f = (request.args.get('currency') or '').strip().upper()
+    start_date = (request.args.get('start_date') or '').strip()
+    end_date = (request.args.get('end_date') or '').strip()
+
+    where, params = [], []
+    if start_date: where.append("date(timestamp) >= ?"); params.append(start_date)
+    if end_date:   where.append("date(timestamp) <= ?"); params.append(end_date)
+    if username_f: where.append("username = ?");        params.append(username_f)
+    if currency_f: where.append("currency = ?");        params.append(currency_f)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+
+    with get_db() as db:
+        rows = db.execute(
+            f"SELECT username, timestamp, type, amount, currency FROM transactions{where_sql} ORDER BY id DESC",
+            params
+        ).fetchall()
+
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["username", "timestamp", "type", "amount", "currency"])
+    for r in rows:
+        w.writerow([r["username"], r["timestamp"], r["type"], r["amount"], r["currency"]])
+
+    return Response(
+        out.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=transactions.csv"}
+    )
+
+@app.route('/admin/export/balances.csv')
+def export_balances_csv():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    if not session.get('is_admin') and session.get('username') != (os.getenv('ADMIN_USERNAME') or ''):
+        flash("غير مصرح.", "error")
+        return redirect(url_for('index'))
+
+    import csv, io
+    username_f = (request.args.get('username') or '').strip()
+
+    with get_db() as db:
+        if username_f:
+            rows = db.execute(
+                "SELECT username, currency, amount FROM balances WHERE username=? ORDER BY username, currency",
+                (username_f,)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT username, currency, amount FROM balances ORDER BY username, currency"
+            ).fetchall()
+
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["username", "currency", "amount"])
+    for r in rows:
+        w.writerow([r["username"], r["currency"], r["amount"]])
+
+    return Response(
+        out.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=balances.csv"}
+    )
+# ======= نهاية الإضافة =======
+
 @app.route('/about')
 def about():
     return "Currency Converter — Flask + SQLite (Binance Pay only)"
+
+@app.get('/health')
+def health():
+    return 'ok', 200
 
 # تشغيل
 init_db()
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+

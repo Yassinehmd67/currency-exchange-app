@@ -192,6 +192,9 @@
   const amtInput = document.getElementById('bp_amount');
   const cryptoSel = document.getElementById('bp_crypto');
 
+  // اجلب توكن CSRF من السيرفر عبر Jinja
+  const CSRF = "{{ csrf_token() }}";
+
   function getAmount(){
     const v = parseFloat(amtInput.value || '0');
     return (isFinite(v) && v > 0) ? v.toFixed(8) : null;
@@ -200,22 +203,41 @@
   bpBtn?.addEventListener('click', async () => {
     const amount = getAmount();
     if (!amount){ alert('يرجى إدخال مبلغ صحيح (> 0)'); return; }
-    bpBtn.disabled = true; const old = bpBtn.textContent; bpBtn.textContent = '⏳ جاري إنشاء الطلب...';
+    if (bpBtn.disabled) return;
+
+    const old = bpBtn.textContent;
+    bpBtn.disabled = true;
+    bpBtn.textContent = '⏳ جاري إنشاء الطلب...';
+
     try{
       const res = await fetch("{{ url_for('binance_create_order') }}", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": CSRF         // ← مهم جدًا
+        },
+        credentials: "same-origin",   // تأكد من إرسال الكوكي
         body: JSON.stringify({ amount: parseFloat(amount), crypto: cryptoSel.value })
       });
-      const data = await res.json();
+
+      const data = await res.json().catch(()=> ({}));
+
+if (!res.ok || !data.ok) {
+  const code = data?.error || (res.status + "");
+  const extra = data?.detail ? "\n" + JSON.stringify(data.detail) : "";
+  alert(`تعذر إنشاء طلب Binance Pay.\nError: ${code}${extra}`);
+  bpBtn.disabled = false; bpBtn.textContent = old;
+  return;
+}
       if (!data.ok || !data.url){
-        console.error('Binance create order error:', data);
         alert('تعذر إنشاء طلب Binance Pay.');
         bpBtn.disabled = false; bpBtn.textContent = old;
         return;
       }
-      window.location = data.url; // الدفع على Binance
+
+      window.location = data.url; // التحويل لبوابة الدفع على Binance
     }catch(e){
+      console.error(e);
       alert('خطأ في الشبكة أثناء بدء الدفع.');
       bpBtn.disabled = false; bpBtn.textContent = old;
     }
