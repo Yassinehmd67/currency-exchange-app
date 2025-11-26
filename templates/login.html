@@ -1,32 +1,90 @@
+<!-- C:\Users\PC\Desktop\currency_converter_project\templates\login.html -->
 <!DOCTYPE html>
 <html lang="{{ session.get('lang','ar') }}">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{{ t('login') }}</title>
-  <style>
-    body{font-family:system-ui,"Cairo",sans-serif;background:#f2f5f8;
-         direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};}
-    .box{max-width:420px;margin:8vh auto;background:#fff;border:1px solid #eee;border-radius:14px;padding:18px}
-    label{display:block;margin:6px 0 4px} input{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px}
-    button{padding:10px 14px;border:1px solid #111;background:#111;color:#fff;border-radius:8px;margin-top:10px;cursor:pointer}
-    a{text-decoration:none;color:#06c}
-  </style>
+    <meta charset="UTF-8">
+    <title>{{ 'Login' if session.get('lang')=='en' else 'تسجيل الدخول' }}</title>
+
+    <style>
+        body{
+            font-family:'Cairo',sans-serif;
+            background:#f4f6f8;
+            display:flex;
+            justify-content:center;
+            align-items:center;
+            height:100vh;
+            margin:0;
+            direction:{{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};
+        }
+        .box{
+            background:#fff;
+            width:360px;
+            padding:30px;
+            border-radius:14px;
+            box-shadow:0 4px 14px rgba(0,0,0,.1);
+            text-align:center;
+        }
+        h2{color:#2c3e50;margin-bottom:20px;font-size:22px;}
+        input{
+            width:100%;
+            padding:12px;
+            border:1px solid #ccc;
+            border-radius:8px;
+            margin-bottom:15px;
+            font-size:15px;
+        }
+        button{
+            width:100%;
+            padding:12px;
+            background:#3498db;
+            color:#fff;
+            border-radius:8px;
+            border:none;
+            font-size:16px;
+            cursor:pointer;
+        }
+        button:hover{background:#2980b9;}
+        .link{display:block;margin-top:15px;color:#3498db;text-decoration:none;}
+        .link:hover{text-decoration:underline;}
+        .flash{color:#e74c3c;margin-bottom:10px;font-size:14px;}
+        .lang-switch{
+            position:absolute;top:20px;
+            {{ 'left' if session.get('lang','ar')=='en' else 'right' }}:20px;
+        }
+        .lang-switch a{color:#3498db;font-weight:bold;text-decoration:none;}
+    </style>
 </head>
 <body>
-<div class="box">
-  <h2>{{ t('login') }}</h2>
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% for cat,msg in messages %}<div>{{ msg }}</div>{% endfor %}
-  {% endwith %}
-  <form method="POST" action="{{ url_for('login') }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>{{ t('username') }}</label>
-    <input name="username" required>
-    <label>{{ t('password') }}</label>
-    <input type="password" name="password" required>
-    <button type="submit">{{ t('login') }}</button>
-  </form>
-  <p>{{ t('no_account') }} <a href="{{ url_for('register') }}">{{ t('register') }}</a></p>
+
+<div class="lang-switch">
+    <a href="{{ url_for('toggle_language') }}">
+        🌐 {{ 'العربية' if session.get('lang')=='en' else 'English' }}
+    </a>
 </div>
+
+<div class="box">
+    <h2>{{ 'Login to your account' if session.get('lang')=='en' else 'تسجيل الدخول إلى حسابك' }}</h2>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <p class="flash">{{ message }}</p>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form action="{{ url_for('login') }}" method="POST">
+        <input type="text" name="username"
+               placeholder="{{ 'Username' if session.get('lang')=='en' else 'اسم المستخدم' }}" required>
+        <input type="password" name="password"
+               placeholder="{{ 'Password' if session.get('lang')=='en' else 'كلمة المرور' }}" required>
+        <button type="submit">{{ 'Login' if session.get('lang')=='en' else 'دخول' }}</button>
+    </form>
+
+    <a class="link" href="{{ url_for('register') }}">
+        {{ 'Create a new account' if session.get('lang')=='en' else 'إنشاء حساب جديد' }}
+    </a>
+</div>
+
 </body>
 </html>

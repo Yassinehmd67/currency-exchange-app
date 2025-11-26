@@ -1,0 +1,88 @@
+<!-- C:\Users\PC\Desktop\currency_converter_project\templates\transactions.html -->
+
+<!DOCTYPE html>
+<html lang="{{ session.get('lang','ar') }}">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>{{ t('recent_transactions') }}</title>
+  <style>
+    body{
+      font-family:system-ui,"Cairo",sans-serif;
+      margin:0;
+      background:#f7f7f9;
+      direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};
+    }
+    header{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:12px 16px;
+      background:#111;
+      color:#fff;
+    }
+    header a{
+      color:#9ad;
+      text-decoration:none;
+      margin-inline:8px;
+    }
+    main{
+      max-width:960px;
+      margin:24px auto;
+      padding:0 12px;
+    }
+    .card{
+      background:#fff;
+      border:1px solid #e8e8ef;
+      border-radius:14px;
+      padding:16px;
+      box-shadow:0 2px 10px rgba(0,0,0,.03);
+    }
+    table{width:100%;border-collapse:collapse}
+    th,td{
+      padding:8px;
+      border-bottom:1px solid #eee;
+      text-align:center;
+    }
+    h1{margin:0 0 16px}
+    .muted{opacity:.8}
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <a href="{{ url_for('index') }}">← {{ t('home') }}</a>
+  </div>
+  <div>{{ t('recent_transactions') }}</div>
+  <div><!-- كان هنا رابط notifications، أزلناه مؤقتًا --></div>
+</header>
+
+<main>
+  <section class="card">
+    <h1>📜 {{ t('recent_transactions') }}</h1>
+    <table>
+      <thead>
+        <tr>
+          <th>{{ t('time') }}</th>
+          <th>{{ t('type') }}</th>
+          <th>{{ t('amount') }}</th>
+          <th>{{ t('currency') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for trow in transactions %}
+        <tr>
+          <td>{{ trow.timestamp }}</td>
+          <td>{{ t(trow.type) }}</td>
+          <td>{{ trow.amount }}</td>
+          <td>{{ trow.currency }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="muted">{{ t('no_transactions_yet') }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</main>
+</body>
+</html>

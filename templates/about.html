@@ -1,70 +1,68 @@
+<!-- C:\Users\PC\Desktop\currency_converter_project\templates\about.html -->
+
 <!DOCTYPE html>
-<html lang="{{ session.get('lang', 'ar') }}">
+<html lang="{{ session.get('lang','ar') }}">
 <head>
-    <meta charset="UTF-8">
-    <title>{{ 'About the App' if session.get('lang') == 'en' else 'معلومات حول التطبيق' }}</title>
-    <style>
-        body {
-            font-family: 'Cairo', sans-serif;
-            background-color: #f4f6f8;
-            margin: 0;
-            padding: 0;
-            direction: {{ 'rtl' if session.get('lang', 'ar') == 'ar' else 'ltr' }};
-        }
-        .info-box {
-            max-width: 800px;
-            margin: 50px auto;
-            background: #fff;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-        h2 {
-            text-align: center;
-            color: #2c3e50;
-            margin-bottom: 20px;
-        }
-        ul {
-            line-height: 2;
-            font-size: 18px;
-        }
-        a {
-            display: block;
-            text-align: center;
-            margin-top: 30px;
-            text-decoration: none;
-            color: #3498db;
-            font-weight: bold;
-        }
-        a:hover {
-            text-decoration: underline;
-        }
-    </style>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>{{ t('about_app') }}</title>
+  <style>
+    body{
+      font-family:system-ui,"Cairo",sans-serif;
+      margin:0;
+      background:#f7f7f9;
+      direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};
+    }
+    header{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:12px 16px;
+      background:#111;
+      color:#fff;
+    }
+    header a{
+      color:#9ad;
+      text-decoration:none;
+      margin-inline:8px;
+    }
+    main{
+      max-width:900px;
+      margin:24px auto;
+      padding:0 12px;
+    }
+    .card{
+      background:#fff;
+      border:1px solid #e8e8ef;
+      border-radius:14px;
+      padding:16px;
+      box-shadow:0 2px 10px rgba(0,0,0,.03);
+      margin-bottom:16px;
+    }
+    h1,h2{margin:6px 0 12px}
+    ul{margin:0;padding-inline-start:22px}
+    li{margin:6px 0}
+    .muted{opacity:.85}
+  </style>
 </head>
 <body>
-<div class="info-box">
-    <h2>{{ 'About the App' if session.get('lang') == 'en' else 'معلومات حول التطبيق' }}</h2>
+<header>
+  <div>
+    <a href="{{ url_for('index') }}">← {{ t('home') }}</a>
+  </div>
+  <div>{{ t('about_app') }}</div>
+  <div><!-- مكان فارغ كان فيه notifications --></div>
+</header>
 
-    {% if session.get('lang') == 'en' %}
-        <ul>
-            <li>PayPal charges a commission of about 3% on transfers.</li>
-            <li>This application only deducts 1% commission from your withdrawals.</li>
-            <li>All payments are processed within 20 minutes to 12 hours, depending on the currency.</li>
-            <li>The larger the withdrawal amount, the lower the PayPal commission rate (relatively).</li>
-            <li>PayPal fees may vary depending on the country of the user.</li>
-        </ul>
-    {% else %}
-        <ul>
-            <li>يقوم بايبال بخصم عمولة تقدر بحوالي 3٪ عند التحويل.</li>
-            <li>التطبيق يخصم فقط 1٪ من المبلغ المسحوب كعمولة.</li>
-            <li>يتم معالجة المدفوعات خلال مدة تتراوح بين 20 دقيقة إلى 12 ساعة، حسب العملة المختارة.</li>
-            <li>كلما كان المبلغ المسحوب كبيرًا، كانت عمولة بايبال أقل نسبيًا.</li>
-            <li>تختلف نسبة عمولة بايبال حسب البلد الذي ينتمي إليه المستخدم.</li>
-        </ul>
-    {% endif %}
-
-    <a href="{{ url_for('index') }}">{{ '⬅️ Back to Dashboard' if session.get('lang') == 'en' else '⬅️ العودة إلى لوحة التحكم' }}</a>
-</div>
-
+<main>
+  <section class="card">
+    <h2>ℹ️ {{ t('about_app') }}</h2>
+    <ul class="muted">
+      {% for point in t('about_app_points') %}
+        <li>{{ point }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+</main>
 </body>
 </html>

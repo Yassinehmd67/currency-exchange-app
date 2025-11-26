@@ -2,7 +2,7 @@
 <html lang="ar">
 <head>
   <meta charset="utf-8" />
-  <title>لوحة طلبات السحب</title>
+  <title>لوحة شحنات Binance</title>
   <style>
     body {
       font-family: "Cairo", system-ui, sans-serif;
@@ -68,7 +68,7 @@
     }
     .st-pending { background:#fef3c7; color:#92400e; }
     .st-processing { background:#dbeafe; color:#1e40af; }
-    .st-paid { background:#dcfce7; color:#166534; }
+    .st-approved { background:#dcfce7; color:#166534; }
     .st-rejected { background:#fee2e2; color:#b91c1c; }
     form.actions {
       display:flex;
@@ -86,7 +86,7 @@
       cursor:pointer;
     }
     .btn-proc { background:#e0f2fe; color:#0369a1; }
-    .btn-paid { background:#bbf7d0; color:#166534; }
+    .btn-approve { background:#bbf7d0; color:#166534; }
     .btn-reject { background:#fecaca; color:#991b1b; }
     .reason-input {
       border:1px solid #e5e7eb;
@@ -95,20 +95,14 @@
       font-size:11px;
       min-width:120px;
     }
-    .payout {
-      max-width: 220px;
-      word-break: break-all;
-      font-size: 12px;
-      color:#111827;
-    }
   </style>
 </head>
 <body>
   <div class="topbar">
-    <div>💸 لوحة طلبات السحب</div>
+    <div>🛠 لوحة شحنات Binance</div>
     <div>
       <a href="{{ url_for('admin_overview') }}">📊 لوحة الأدمن</a>
-      <a href="{{ url_for('admin_deposits') }}">📥 الشحنات</a>
+      <a href="{{ url_for('admin_withdrawals') }}">💸 السحوبات</a>
       <a href="{{ url_for('index') }}">🏠 الرئيسية</a>
     </div>
   </div>
@@ -123,7 +117,7 @@
         {% endif %}
       {% endwith %}
 
-      <h1>📤 طلبات السحب</h1>
+      <h1>📥 طلبات الشحن عبر Binance Pay</h1>
 
       <table>
         <thead>
@@ -133,57 +127,60 @@
             <th>البريد</th>
             <th>المبلغ</th>
             <th>العملة</th>
-            <th>بيانات جهة الاستلام</th>
+            <th>الطريقة</th>
             <th>الحالة</th>
+            <th>TxID / ملاحظات</th>
             <th>الإجراءات</th>
           </tr>
         </thead>
         <tbody>
-          {% for w in withdrawals %}
+          {% for d in deposits %}
             <tr>
-              <td>{{ w.id }}</td>
-              <td>{{ w.username }}</td>
-              <td>{{ w.email or '-' }}</td>
-              <td>{{ '%.2f'|format(w.amount or 0) }}</td>
-              <td>{{ w.currency }}</td>
-              <td class="payout">
-                {{ w.payout_info or '-' }}
-              </td>
+              <td>{{ d.id }}</td>
+              <td>{{ d.username }}</td>
+              <td>{{ d.email or '-' }}</td>
+              <td>{{ '%.2f'|format(d.amount or 0) }}</td>
+              <td>{{ d.fiat_currency }}</td>
+              <td>{{ d.pay_method or '-' }}</td>
               <td>
-                {% set st = (w.status or 'pending') %}
+                {% set st = (d.status or 'pending') %}
                 <span class="status-badge
                   {% if st == 'pending' %}st-pending{% elif st == 'processing' %}st-processing
-                  {% elif st == 'paid' %}st-paid{% elif st == 'rejected' %}st-rejected{% endif %}">
+                  {% elif st == 'approved' %}st-approved{% elif st == 'rejected' %}st-rejected{% endif %}">
                   {{ st }}
                 </span>
                 <div style="font-size:11px; color:#6b7280;">
-                  {{ w.timestamp }}
+                  {{ d.timestamp }}
                 </div>
               </td>
+              <td style="max-width:200px;word-break:break-all;">
+                {{ d.txid or '-' }}
+              </td>
               <td>
-                {% if w.status in ('paid', 'rejected') %}
+                {% if d.status in ('approved', 'rejected') %}
+                  <!-- لا أزرار بعد الحالة النهائية -->
                   -
                 {% else %}
-                  <form class="actions" method="POST" action="{{ url_for('admin_withdrawals') }}">
-                    <input type="hidden" name="withdrawal_id" value="{{ w.id }}">
+                  <form class="actions" method="POST" action="{{ url_for('admin_deposits') }}">
+                    <input type="hidden" name="deposit_id" value="{{ d.id }}">
                     <button type="submit" name="action" value="processing" class="btn-proc">
                       ⏳ قيد المعالجة
                     </button>
-                    <button type="submit" name="action" value="paid" class="btn-paid">
-                      ✅ تم الدفع
+                    <button type="submit" name="action" value="approve" class="btn-approve">
+                      ✅ اعتماد
                     </button>
                     <button type="submit" name="action" value="reject" class="btn-reject">
-                      ❌ رفض + إعادة المبلغ
+                      ❌ رفض
                     </button>
                     <input type="text" name="reason" class="reason-input"
-                           placeholder="سبب (اختياري)">
+                           placeholder="سبب الرفض (اختياري)">
                   </form>
                 {% endif %}
               </td>
             </tr>
           {% else %}
             <tr>
-              <td colspan="8">لا توجد طلبات سحب حالياً.</td>
+              <td colspan="9">لا توجد طلبات شحن حالياً.</td>
             </tr>
           {% endfor %}
         </tbody>

@@ -7,7 +7,11 @@ from werkzeug.security import generate_password_hash
 DB_PATH = "data.db"
 ADMIN_USERNAME = "admin"        # غيّره إن أردت
 ADMIN_PASSWORD = "admin12345"   # غيّرها إن أردت
-SUPPORTED_CURRENCIES = ["USD", "EUR", "GBP", "MAD", "AED", "SAR"]
+SUPPORTED_CURRENCIES = ["USD", "EUR", "GBP", "MAD", "AED", "SAR", "EGP"]
+# ...
+    for cur in SUPPORTED_CURRENCIES:
+        db.execute("INSERT OR IGNORE INTO balances(username, currency, amount) VALUES(?,?,0)", (ADMIN_USERNAME, cur))
+# ...
 
 schema = """
 CREATE TABLE IF NOT EXISTS users (

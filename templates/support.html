@@ -1,0 +1,87 @@
+<!-- C:\Users\PC\Desktop\currency_converter_project\templates\support.html -->
+
+<!DOCTYPE html>
+<html lang="{{ session.get('lang','ar') }}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ t('support') }}</title>
+  <style>
+    body{
+      font-family:system-ui,"Cairo",sans-serif;
+      margin:0;
+      background:#f9f9fb;
+      direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};
+    }
+    header{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:12px 16px;
+      background:#111;
+      color:#fff;
+    }
+    header a{
+      color:#9ad;
+      text-decoration:none;
+      margin-inline:8px;
+    }
+    main{
+      max-width:700px;
+      margin:30px auto;
+      padding:20px;
+      background:#fff;
+      border-radius:12px;
+      box-shadow:0 2px 10px rgba(0,0,0,.08);
+    }
+    h1{margin-bottom:20px}
+    .contact-list{
+      display:flex;
+      flex-direction:column;
+      gap:16px;
+    }
+    .contact-item{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      font-size:18px;
+    }
+    .contact-item a{
+      text-decoration:none;
+      color:#111;
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+    .icon{font-size:28px}
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <a href="{{ url_for('index') }}">🏠 {{ t('home') }}</a>
+  </div>
+  <div>
+    <a href="{{ url_for('logout') }}">🔓 {{ t('logout') }}</a>
+  </div>
+</header>
+
+<main>
+  <h1>🆘 {{ t('support') }}</h1>
+  <p>{{ t('contact_via') }}:</p>
+
+  <div class="contact-list">
+    <div class="contact-item">
+      <a href="https://wa.me/212721924217" target="_blank">
+        <span class="icon">💬</span> {{ t('whatsapp') }}: +212721924217
+      </a>
+    </div>
+    <div class="contact-item">
+      <a href="https://t.me/Yassinetradin456" target="_blank">
+        <span class="icon">📨</span> {{ t('telegram') }}: @Yassinetradin456
+      </a>
+    </div>
+  </div>
+</main>
+</body>
+</html>

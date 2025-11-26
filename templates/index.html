@@ -1,226 +1,572 @@
 <!DOCTYPE html>
-<html lang="{{ session.get('lang','ar') }}">
+<html lang="{{ session.get('lang', 'ar') }}">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>{{ t('user_dashboard') }}</title>
-  <style>
-    body{font-family:system-ui,"Cairo",sans-serif;margin:0;background:#f7f7f9;
-         direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};}
-    header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#111;color:#fff}
-    header a{color:#9ad; text-decoration:none; margin-inline:8px}
-    main{max-width:980px;margin:24px auto; padding:0 12px}
-    .grid{display:grid;grid-template-columns:1fr;gap:16px}
-    @media(min-width:900px){.grid{grid-template-columns:1fr 1fr}}
-    .card{background:#fff;border:1px solid #e8e8ef;border-radius:14px;padding:16px;box-shadow:0 2px 10px rgba(0,0,0,.03)}
-    h1,h2{margin:6px 0 12px}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:8px;border-bottom:1px solid #eee;text-align:center}
-    .muted{opacity:.8;font-size:12px}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
-    label{display:block;margin-bottom:4px;font-size:14px}
-    input,select,button{padding:10px;border:1px solid #ddd;border-radius:8px;font:inherit}
-    button{cursor:pointer}
-    .top-links{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .lang{font-size:13px;opacity:.9}
-    .ok{color:#1a7f37}.err{color:#b54708}
-    .btns{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-    .split{display:grid;grid-template-columns:1fr;gap:12px}
-    @media(min-width:640px){.split{grid-template-columns:1fr 1fr}}
-    .badge{display:inline-block;background:#eef;padding:2px 8px;border-radius:999px;font-size:12px}
-    .warn{padding:8px;border:1px solid #f3c; background:#fff0f6;border-radius:10px}
-    .btn-plain{border:1px solid #111;background:#111;color:#fff;border-radius:8px;padding:10px 12px}
-    .btn-plain[disabled]{opacity:.6;cursor:not-allowed}
-  </style>
+    <meta charset="UTF-8">
+    <title>
+        {% if session.get('lang') == 'en' %}
+            Dashboard
+        {% else %}
+            لوحة التحكم
+        {% endif %}
+    </title>
+
+    <!-- أعلام العملات -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/6.7.0/css/flag-icons.min.css">
+
+    <style>
+        body {
+            font-family: 'Cairo', sans-serif;
+            background-color: #f4f6f8;
+            margin: 0;
+            padding: 0;
+            direction: {{ 'rtl' if session.get('lang', 'ar') == 'ar' else 'ltr' }};
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 20px;
+            background: #111827;
+            color: #fff;
+            font-size: 14px;
+        }
+
+        .topbar a {
+            color: #93c5fd;
+            text-decoration: none;
+            margin-inline: 8px;
+        }
+
+        .topbar a:hover {
+            text-decoration: underline;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 24px auto;
+            padding: 0 16px 32px;
+        }
+
+        .card {
+            background: #ffffff;
+            border-radius: 14px;
+            box-shadow: 0 2px 12px rgba(15, 23, 42, 0.08);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        h2, h3 {
+            margin-top: 0;
+            color: #111827;
+            text-align: center;
+        }
+
+        .flash {
+            text-align: center;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+
+        .flash.error {
+            color: #e11d48;
+        }
+
+        .flash.success {
+            color: #16a34a;
+        }
+
+        /* الأرصدة */
+        .balance-grid {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .balance-card {
+            min-width: 120px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: #f3f4f6;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .balance-card strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        /* النماذج */
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-width: 360px;
+            margin: 0 auto;
+        }
+
+        input, select, textarea {
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #d1d5db;
+            font-size: 14px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 70px;
+        }
+
+        button {
+            padding: 10px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            background: #2563eb;
+            color: #fff;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        .note {
+            font-size: 13px;
+            color: #6b7280;
+            text-align: center;
+            margin-top: 6px;
+            white-space: pre-line;
+        }
+
+        .section-title {
+            margin-bottom: 8px;
+            font-size: 18px;
+        }
+
+        .two-cols {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+
+        @media (min-width: 800px) {
+            .two-cols {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        .tx-toggle {
+            cursor: pointer;
+            color: #2563eb;
+            text-align: center;
+            margin-top: 8px;
+        }
+
+        .tx-list {
+            list-style: none;
+            padding: 0;
+            margin: 12px 0 0;
+        }
+
+        .tx-item {
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 13px;
+            margin-bottom: 6px;
+        }
+
+        .tx-item .ts {
+            color: #6b7280;
+            font-size: 12px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: 11px;
+            margin-bottom: 4px;
+            background: #e5e7eb;
+            color: #111827;
+        }
+    </style>
 </head>
 <body>
-<header>
-  <div class="top-links">
-    <a href="{{ url_for('index') }}">🏠 {{ t('home') }}</a>
-    {% if session.get('is_admin') %}
-      <a href="{{ url_for('admin_overview') }}">🛡️ {{ t('admin_panel') }}</a>
-      <a href="{{ url_for('admin_withdrawals') }}">💸 {{ t('withdrawals') }}</a>
-    {% endif %}
-  </div>
-  <div class="top-links">
-    <span class="lang">
-      <a href="{{ url_for('set_lang', lang='ar', next=request.full_path) }}">{{ t('arabic') }}</a> |
-      <a href="{{ url_for('set_lang', lang='en', next=request.full_path) }}">{{ t('english') }}</a>
-    </span>
-    <a href="{{ url_for('logout') }}">🔓 {{ t('logout') }}</a>
-  </div>
-</header>
 
-<main>
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      <div class="card" aria-live="polite">
-        {% for cat,msg in messages %}
-          <div class="{{ 'ok' if cat=='success' else 'err' if cat=='error' else '' }}">{{ msg }}</div>
-        {% endfor %}
-      </div>
-    {% endif %}
-  {% endwith %}
-
-  <div class="grid">
-    <!-- الرصيد -->
-    <section class="card">
-      <h2>💰 {{ t('your_balances') }}</h2>
-      <table>
-        <thead><tr><th>{{ t('currency') }}</th><th>{{ t('balance') }}</th></tr></thead>
-        <tbody>
-          {% for cur,amt in (balances or {}).items() %}
-          <tr><td>{{ cur }}</td><td>{{ '%.2f'|format(amt) }}</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <p class="muted">{{ t('pending_withdrawals_count') }}: {{ pending_withdrawals_count or 0 }}</p>
-    </section>
-
-    <!-- معاملات أخيرة -->
-    <section class="card">
-      <h2>📜 {{ t('recent_transactions') }}</h2>
-      <table>
-        <thead><tr><th>{{ t('time') }}</th><th>{{ t('type') }}</th><th>{{ t('amount') }}</th><th>{{ t('currency') }}</th></tr></thead>
-        <tbody>
-          {% for trow in transactions %}
-          <tr>
-            <td>{{ trow.timestamp }}</td>
-            <td>{{ trow.type }}</td>
-            <td>{{ trow.amount }}</td>
-            <td>{{ trow.currency }}</td>
-          </tr>
-          {% else %}
-          <tr><td colspan="4" class="muted">{{ t('no_transactions_yet') }}</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
-  </div>
-
-  <!-- تحويل بين العملات -->
-  <section class="card">
-    <h2>🔁 {{ t('convert_between_currencies') }}</h2>
-    <form method="POST" action="{{ url_for('convert_balance') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="row">
-        <div>
-          <label>{{ t('from') }}</label>
-          <select name="from_currency" required>
-            {% for cur in supported %}<option value="{{ cur }}">{{ cur }}</option>{% endfor %}
-          </select>
-        </div>
-        <div>
-          <label>{{ t('to') }}</label>
-          <select name="to_currency" required>
-            {% for cur in supported %}<option value="{{ cur }}">{{ cur }}</option>{% endfor %}
-          </select>
-        </div>
-        <div>
-          <label>{{ t('amount') }}</label>
-          <input type="number" name="amount" min="0" step="0.01" required>
-        </div>
-      </div>
-      <div style="margin-top:10px">
-        <button type="submit">{{ t('convert') }}</button>
-      </div>
-    </form>
-  </section>
-
-  <!-- شحن عبر Binance Pay فقط -->
-  <section class="card">
-    <h2>🟡 {{ t('binance_pay_topup_title') }}</h2>
-    {% if not binance_enabled %}
-      <div class="warn">⚠️ {{ t('binance_not_configured_warn') }}</div>
-    {% endif %}
-    <div class="split">
-      <form class="row" onsubmit="return false">
-        <div>
-          <label>{{ t('crypto_currency') }}</label>
-          <select id="bp_crypto">
-            <option value="USDT">USDT</option>
-            <option value="BTC">BTC</option>
-          </select>
-        </div>
-        <div>
-          <label>{{ t('amount_to_pay') }}</label>
-          <input type="number" id="bp_amount" min="0.5" step="0.00000001" required>
-        </div>
-      </form>
-      <div>
-        <span class="badge">{{ t('secure_payment_on_binance') }}</span>
-        <div class="btns" style="margin-top:10px">
-          <button id="binance-pay" type="button" class="btn-plain" {{ 'disabled' if not binance_enabled else '' }}>🟡 {{ t('pay_with_binance_pay') }}</button>
-        </div>
-        <p class="muted">{{ t('after_payment_note') }}</p>
-      </div>
+<!-- شريط علوي -->
+<div class="topbar">
+    <div>
+        {% if session.get('lang', 'ar') == 'en' %}
+            👋 Welcome, {{ username }}
+        {% else %}
+            👋 مرحباً، {{ username }}
+        {% endif %}
     </div>
-  </section>
+    <div>
+    <a href="{{ url_for('toggle_language') }}">
+        🌐 {% if session.get('lang','ar') == 'ar' %}English{% else %}العربية{% endif %}
+    </a>
 
-  <!-- طلب سحب يدوي -->
-  <section class="card">
-    <h2>💸 {{ t('withdraw_request') }}</h2>
-    <form method="POST" action="{{ url_for('withdraw') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="row">
-        <div>
-          <label>{{ t('amount') }}</label>
-          <input type="number" name="withdraw_amount" min="1" step="0.01" required>
+    <a href="{{ url_for('notifications') }}" style="position:relative;">
+        🔔 {% if session.get('lang') == 'en' %}Notifications{% else %}الإشعارات{% endif %}
+        {% if unread_notifications and unread_notifications > 0 %}
+            <span style="
+                position:absolute;
+                top:-4px;
+                right:-8px;
+                background:#ef4444;
+                color:#fff;
+                border-radius:999px;
+                padding:0 6px;
+                font-size:11px;
+            ">
+              {{ unread_notifications }}
+            </span>
+        {% endif %}
+    </a>
+
+    <a href="{{ url_for('about') }}">ℹ️ {% if session.get('lang') == 'en' %}About{% else %}حول التطبيق{% endif %}</a>
+    <a href="{{ url_for('support') }}">🆘 {% if session.get('lang') == 'en' %}Support{% else %}الدعم{% endif %}</a>
+    <a href="{{ url_for('logout') }}">🔓 {% if session.get('lang') == 'en' %}Logout{% else %}تسجيل الخروج{% endif %}</a>
+</div>
+</div>
+
+<div class="container">
+
+    <!-- رسائل فلاش -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="card">
+          {% for category, message in messages %}
+            <p class="flash {{ category }}">{{ message }}</p>
+          {% endfor %}
         </div>
-        <div>
-          <label>{{ t('currency') }}</label>
-          <select name="withdraw_currency" required>
-            {% for cur in supported %}<option value="{{ cur }}">{{ cur }}</option>{% endfor %}
-          </select>
+      {% endif %}
+    {% endwith %}
+
+    <!-- الأرصدة -->
+    <div class="card">
+        <h2>
+            {% if session.get('lang') == 'en' %}
+                💰 Your Balances
+            {% else %}
+                💰 أرصدتك الحالية
+            {% endif %}
+        </h2>
+
+        <div class="balance-grid">
+            {% for c, v in user.balance.items() %}
+                <div class="balance-card">
+                    {% if c in currency_to_country %}
+                        <span class="flag-icon flag-icon-{{ currency_to_country[c] }}"></span><br>
+                    {% endif %}
+                    <strong>{{ c }}</strong><br>
+                    <span class="balance-amount" data-currency="{{ c }}">
+                        {{ "%.2f"|format(v) }}
+                    </span>
+                </div>
+            {% endfor %}
         </div>
-        <div>
-          <label>{{ t('payout_email_placeholder') }}</label>
-          <input type="email" name="paypal_email" placeholder="you@example.com" required>
-        </div>
+    </div>
+
+    <!-- شبك Binance + التحويل + السحب -->
+    <div class="two-cols">
+
+        <!-- شحن عبر Binance UID -->
+<div class="card">
+    <h3 class="section-title">
+        {% if session.get('lang') == 'en' %}
+            💳 Top-up via Binance Pay (UID)
+        {% else %}
+            💳 شحن الرصيد عبر Binance Pay (UID)
+        {% endif %}
+    </h3>
+
+    <div class="note">
+        {% if session.get('lang') == 'en' %}
+UID (Binance Pay) to send USDT:
+        {% else %}
+هذا هو UID الخاص بك في Binance Pay لاستقبال USDT:
+        {% endif %}
+        <br><strong>{{ binance_uid }}</strong>
+    </div>
+
+    <div class="note">
+        {% if session.get('lang') == 'en' %}
+1️⃣ Open Binance ➝ Binance Pay  
+2️⃣ Send USDT to the UID above  
+3️⃣ Paste the TxID / note here and choose the currency to credit in your account.
+        {% else %}
+١️⃣ افتح تطبيق باينانس ➝ Binance Pay  
+٢️⃣ أرسل USDT إلى الـ UID بالأعلى  
+٣️⃣ الصق رقم العملية (TxID) أو ملاحظة التحويل واختر العملة التي تريد شحنها في حسابك.
+        {% endif %}
+    </div>
+
+    {# ⭐ خيار الشحن الأوتوماتيكي 100 USDT عبر رابط Binance Pay #}
+    {% if binance_auto_100_url %}
+      <div class="note">
+        {% if session.get('lang') == 'en' %}
+You can also use a quick automatic payment link (fixed 100&nbsp;USDT):
+        {% else %}
+يمكنك أيضاً استخدام رابط شحن سريع أوتوماتيكي بقيمة ثابتة 100&nbsp;USDT:
+        {% endif %}
       </div>
-      <div style="margin-top:10px">
-        <button type="submit">{{ t('send_withdraw_request') }}</button>
+
+      <div style="text-align:center; margin:10px 0 16px;">
+        <a href="{{ binance_auto_100_url }}" target="_blank"
+           style="display:inline-block;padding:10px 18px;border-radius:999px;
+                  background:#10b981;color:#fff;text-decoration:none;
+                  font-weight:600;font-size:14px;">
+          {% if session.get('lang') == 'en' %}
+            ⚡ Pay 100 USDT automatically
+          {% else %}
+            ⚡ شحن فوري 100 USDT
+          {% endif %}
+        </a>
       </div>
-      <p class="muted">{{ t('withdraw_manual_note') }}</p>
+    {% endif %}
+
+    <form action="{{ url_for('binance_deposit_proof') }}" method="POST">
+        <input type="number" step="0.01" min="0"
+               name="amount"
+               placeholder="{% if session.get('lang') == 'en' %}Amount to credit{% else %}المبلغ المراد إضافته في حسابك{% endif %}"
+               required>
+
+        <select name="currency" required>
+            {% for c in currencies %}
+                <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+        </select>
+
+        <textarea name="txid" required
+                  placeholder="{% if session.get('lang') == 'en' %}
+TxID / proof (e.g. Binance Pay transaction ID)
+                  {% else %}
+رقم العملية (TxID) أو وصف مختصر للتحويل كما يظهر في Binance Pay
+                  {% endif %}"></textarea>
+
+        <button type="submit">
+            {% if session.get('lang') == 'en' %}
+                Send Top-up Proof
+            {% else %}
+                إرسال إثبات الشحن
+            {% endif %}
+        </button>
     </form>
-  </section>
-</main>
+
+    <div class="note">
+        {% if session.get('lang') == 'en' %}
+Top-up will be reviewed manually, then the balance will be added to your account.
+        {% else %}
+سيتم مراجعة الشحن يدويًا، ثم إضافة الرصيد إلى حسابك بعد التأكد من التحويل.
+        {% endif %}
+    </div>
+</div>
+        <!-- طلب السحب -->
+        <div class="card">
+            <h3 class="section-title">
+                {% if session.get('lang') == 'en' %}
+                    📤 Withdrawal Request
+                {% else %}
+                    📤 طلب سحب
+                {% endif %}
+            </h3>
+
+            <form action="{{ url_for('withdraw_request') }}" method="POST">
+                <input type="number" step="0.01" min="0"
+                       name="amount"
+                       placeholder="{% if session.get('lang') == 'en' %}Amount to withdraw{% else %}المبلغ المراد سحبه{% endif %}"
+                       required>
+
+                <select name="currency" required>
+                    {% for c in currencies %}
+                        <option value="{{ c }}">{{ c }}</option>
+                    {% endfor %}
+                </select>
+
+                <textarea name="payout_info" required
+                          placeholder="{% if session.get('lang') == 'en' %}
+Payout info (e.g. bank / wallet / agent name)
+                          {% else %}
+معلومات جهة الاستلام (مثال: حساب بنكي، محفظة رقمية، اسم الوكيل...)
+                          {% endif %}"></textarea>
+
+                <button type="submit">
+                    {% if session.get('lang') == 'en' %}
+                        Send Withdraw Request
+                    {% else %}
+                        إرسال طلب السحب
+                    {% endif %}
+                </button>
+            </form>
+
+            <div class="note">
+                {% if session.get('lang') == 'en' %}
+Your balance will be locked immediately and the withdrawal will be processed manually.
+                {% else %}
+سيتم حجز المبلغ مباشرة من رصيدك، ثم معالجة طلب السحب يدويًا وإرساله لك حسب البيانات التي أدخلتها.
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- محول العملات -->
+    <div class="card">
+        <h3 class="section-title">
+            {% if session.get('lang') == 'en' %}
+                💱 Currency Converter (Inside your balance)
+            {% else %}
+                💱 محول العملات (داخل رصيدك)
+            {% endif %}
+        </h3>
+
+        <form id="convert-form" onsubmit="event.preventDefault(); convertCurrency();">
+            <input type="number" id="convert_amount" step="0.01" min="0"
+                   placeholder="{% if session.get('lang') == 'en' %}Amount{% else %}المبلغ{% endif %}"
+                   required>
+
+            <select id="convert_from" required>
+                {% for c in currencies %}
+                    <option value="{{ c }}">{{ c }}</option>
+                {% endfor %}
+            </select>
+
+            <select id="convert_to" required>
+                {% for c in currencies %}
+                    <option value="{{ c }}">{{ c }}</option>
+                {% endfor %}
+            </select>
+
+            <button type="submit">
+                {% if session.get('lang') == 'en' %}
+                    Convert
+                {% else %}
+                    تحويل
+                {% endif %}
+            </button>
+        </form>
+
+        <p id="convert_result" style="text-align:center; font-weight:bold; margin-top:8px;"></p>
+    </div>
+
+    <!-- سجل العمليات -->
+    <div class="card">
+        <div class="tx-toggle" onclick="toggleTx()">
+            {% if session.get('lang') == 'en' %}
+                📜 Show / Hide Transaction History
+            {% else %}
+                📜 إظهار / إخفاء سجل العمليات
+            {% endif %}
+        </div>
+        <ul id="tx_list" class="tx-list" style="display:none;">
+            {% for tx in user.transactions|reverse %}
+                <li class="tx-item">
+                    <div class="badge">{{ tx.type }}</div><br>
+                    <span class="ts">🕒 {{ tx.timestamp }}</span><br>
+                    💰 {{ tx.amount }} {{ tx.currency or '' }}<br>
+                    {% if tx.details %}
+                        📝 {{ tx.details }}
+                    {% endif %}
+                </li>
+            {% else %}
+                <li class="tx-item">
+                    {% if session.get('lang') == 'en' %}
+                        No transactions yet.
+                    {% else %}
+                        لا توجد عمليات بعد.
+                    {% endif %}
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+
+</div>
 
 <script>
-(function(){
-  const bpBtn = document.getElementById('binance-pay');
-  const amtInput = document.getElementById('bp_amount');
-  const cryptoSel = document.getElementById('bp_crypto');
-
-  function getAmount(){
-    const v = parseFloat(amtInput.value || '0');
-    return (isFinite(v) && v > 0) ? v.toFixed(8) : null;
-  }
-
-  bpBtn?.addEventListener('click', async () => {
-    const amount = getAmount();
-    if (!amount){ alert('{{ t("enter_valid_amount") }}'); return; }
-    bpBtn.disabled = true; const old = bpBtn.textContent; bpBtn.textContent = '⏳ {{ t("creating_order") }}';
-    try{
-      const res = await fetch("{{ url_for('binance_create_order') }}", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: parseFloat(amount), crypto: cryptoSel.value })
-      });
-      const data = await res.json();
-      if (!data.ok || !data.url){
-        console.error('Binance create order error:', data);
-        alert('{{ t("binance_create_failed") }}');
-        bpBtn.disabled = false; bpBtn.textContent = old;
-        return;
-      }
-      window.location = data.url; // الدفع على Binance
-    }catch(e){
-      alert('{{ t("network_error_start_payment") }}');
-      bpBtn.disabled = false; bpBtn.textContent = old;
+    function toggleTx() {
+        const el = document.getElementById('tx_list');
+        el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
     }
-  });
-})();
+
+    async function convertCurrency() {
+        const amount = parseFloat(document.getElementById('convert_amount').value);
+        const from = document.getElementById('convert_from').value;
+        const to = document.getElementById('convert_to').value;
+        const resultElem = document.getElementById('convert_result');
+
+        {% if session.get('lang') == 'en' %}
+        const msgInvalidAmount = "Please enter a valid amount.";
+        const msgSameCurrency  = "Please select different currencies.";
+        const msgConverting    = "Converting...";
+        const msgConverted     = "Converted amount:";
+        const msgRate          = "Exchange rate:";
+        const msgError         = "Error:";
+        const msgErrorFetch    = "Error while converting currencies.";
+        {% else %}
+        const msgInvalidAmount = "يرجى إدخال مبلغ صحيح.";
+        const msgSameCurrency  = "يرجى اختيار عملات مختلفة.";
+        const msgConverting    = "جاري التحويل...";
+        const msgConverted     = "المبلغ بعد التحويل:";
+        const msgRate          = "سعر الصرف:";
+        const msgError         = "خطأ:";
+        const msgErrorFetch    = "حدث خطأ أثناء تحويل العملات.";
+        {% endif %}
+
+        if (!amount || amount <= 0) {
+            resultElem.textContent = msgInvalidAmount;
+            return;
+        }
+        if (from === to) {
+            resultElem.textContent = msgSameCurrency;
+            return;
+        }
+
+        resultElem.textContent = msgConverting;
+
+        try {
+            const response = await fetch('/convert_currency', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ amount, from, to })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                resultElem.textContent =
+                    msgConverted + ' ' + data.converted_amount + ' ' + to +
+                    '\n' + msgRate + ' 1 ' + from + ' = ' + data.rate + ' ' + to;
+
+                // تحديث الأرصدة في الواجهة فورًا بدون إعادة تحميل الصفحة
+                if (data.balances) {
+                    Object.entries(data.balances).forEach(([cur, val]) => {
+                        const el = document.querySelector(
+                            `.balance-amount[data-currency="${cur}"]`
+                        );
+                        if (el) {
+                            el.textContent = Number(val).toFixed(2);
+                        }
+                    });
+                }
+            } else {
+                resultElem.textContent = msgError + ' ' + (data.message || '');
+            }
+        } catch (err) {
+            console.error(err);
+            resultElem.textContent = msgErrorFetch;
+        }
+    }
 </script>
+
 </body>
 </html>

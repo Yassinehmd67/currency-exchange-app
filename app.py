@@ -1,725 +1,1200 @@
-import smtplib, ssl
-from email.message import EmailMessage
 import os
 import json
-import time
-import tempfile
 import sqlite3
 import logging
-import requests
-import hmac, hashlib, secrets, string, uuid
 from datetime import datetime
+from decimal import Decimal, ROUND_DOWN
+
+import csv
+import io
+
 from flask import (
-    Flask, render_template, request, redirect, url_for,
-    session, flash, jsonify, Response
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    flash,
+    session,
+    jsonify,
+    g,
+    abort,
+    Response,
 )
-from flask_wtf.csrf import CSRFProtect
-from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
+from werkzeug.security import generate_password_hash, check_password_hash
 
-# -----------------------------------
-# تهيئة التطبيق والسرّيات من البيئة
-# -----------------------------------
+from currency_converter.converter import convert_currency
+
+# ==============================
+# تحميل الإعدادات من .env
+# ==============================
 load_dotenv()
+
+EXCHANGE_API_KEY = os.getenv("EXCHANGE_API_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY", "changeme")
+DB_PATH = os.getenv("DB_PATH", "data.db")
+BINANCE_UID = os.getenv("BINANCE_UID", "YOUR_BINANCE_UID_HERE")
+BINANCE_AUTO_100_URL = os.getenv("BINANCE_AUTO_100_URL")
+
+# ==============================
+# إنشاء التطبيق
+# ==============================
 app = Flask(__name__)
+app.secret_key = SECRET_KEY
 
-app.secret_key = os.environ.get('SECRET_KEY') or (_ for _ in ()).throw(RuntimeError('SECRET_KEY not set'))
-EXCHANGE_API_KEY = os.environ.get('EXCHANGE_API_KEY') or (_ for _ in ()).throw(RuntimeError('EXCHANGE_API_KEY not set'))
-DB_PATH = os.environ.get('DB_PATH', 'data.db')
+# ==============================
+# الترجمة (translations.json + t)
+# ==============================
+TRANSLATIONS_FILE = "translations.json"
 
-# Binance Pay فقط
-BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')             # BinancePay-Certificate-SN
-BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET')       # HMAC-SHA512 secret
-BINANCE_HOST = 'https://bpay.binanceapi.com'
+try:
+    with open(TRANSLATIONS_FILE, "r", encoding="utf-8") as f:
+        TRANSLATIONS = json.load(f)
+except FileNotFoundError:
+    TRANSLATIONS = {"ar": {}, "en": {}}
 
-# حماية CSRF
-csrf = CSRFProtect(app)
 
-# إعدادات جلسة/كوكي وCSRF إضافية
-app.config.update(
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE=os.getenv("SESSION_COOKIE_SAMESITE", "Lax"),
-    SESSION_COOKIE_SECURE=bool(int(os.getenv("SESSION_COOKIE_SECURE", "0"))),  # اجعلها 1 في الإنتاج مع HTTPS
-    PERMANENT_SESSION_LIFETIME=60*60*24*7,
-    WTF_CSRF_HEADERS=['X-CSRFToken', 'X-CSRF-Token'],
-)
+def translate(key, lang=None):
+    """
+    استخدام داخل القوالب:
+      {{ t('home') }}
 
-# تسجيل
-logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
+    يرجع النص حسب اللغة الحالية في session['lang']،
+    وإذا لم يجد المفتاح يرجع نفس الـ key.
+    """
+    if lang is None:
+        lang = session.get("lang", "ar")
+    lang_map = TRANSLATIONS.get(lang, {})
+    return lang_map.get(key, key)
 
-# -----------------------------------
-# i18n بسيط
-# -----------------------------------
-TRANSLATIONS_FILE = os.path.join(os.path.dirname(__file__), 'translations.json')
-_translations_cache = None
-
-def get_translations():
-    global _translations_cache
-    if _translations_cache is None:
-        try:
-            with open(TRANSLATIONS_FILE, 'r', encoding='utf-8') as f:
-                _translations_cache = json.load(f)
-        except Exception:
-            _translations_cache = {"ar": {}, "en": {}}
-    return _translations_cache
-
-def t(key):
-    lang = session.get('lang', 'ar')
-    trans = get_translations()
-    return (trans.get(lang, {}) or {}).get(key, key)
 
 @app.context_processor
 def inject_t():
-    return {"t": t}
+    """
+    يجعل الدالة t متاحة في جميع القوالب:
+      {{ t('some_key') }}
+    """
+    return {"t": translate}
 
-@app.route('/set_lang')
-def set_lang():
-    lang = request.args.get('lang', 'ar')
-    if lang not in ('ar', 'en'):
-        lang = 'ar'
-    session['lang'] = lang
-    next_url = request.args.get('next') or url_for('index')
-    return redirect(next_url)
 
-# -----------------------------------
-# قاعدة البيانات (SQLite)
-# -----------------------------------
+# ==============================
+# إعداد اللوج
+# ==============================
+logging.basicConfig(
+    filename="app.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+
+# ==============================
+# إعدادات العملات
+# ==============================
+CURRENCIES = ["USD", "EUR", "GBP", "MAD", "AED", "SAR", "EGP"]
+
+CURRENCY_TO_COUNTRY = {
+    "USD": "us",
+    "EUR": "eu",
+    "GBP": "gb",
+    "MAD": "ma",
+    "AED": "ae",
+    "SAR": "sa",
+    "EGP": "eg",
+}
+
+# ==============================
+# دوال التعامل مع قاعدة البيانات
+# ==============================
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """إرجاع اتصال SQLite مخزَّن في g لكل طلب."""
+    if "db" not in g:
+        g.db = sqlite3.connect(DB_PATH)
+        g.db.row_factory = sqlite3.Row
+    return g.db
+
+
+@app.teardown_appcontext
+def close_db(exc):
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
+
 
 def init_db():
-    with get_db() as db:
-        db.executescript("""
+    """إنشاء الجداول إذا لم تكن موجودة."""
+    db = sqlite3.connect(DB_PATH)
+    db.executescript(
+        """
+        PRAGMA foreign_keys = ON;
+
         CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            password_hash TEXT NOT NULL,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
             email TEXT,
-            is_admin INTEGER DEFAULT 0
+            phone TEXT,
+            password_hash TEXT NOT NULL,
+            is_admin INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
+
         CREATE TABLE IF NOT EXISTS balances (
-            username TEXT,
-            currency TEXT,
-            amount REAL DEFAULT 0,
-            PRIMARY KEY (username, currency)
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            currency TEXT NOT NULL,
+            amount REAL NOT NULL DEFAULT 0,
+            UNIQUE(user_id, currency),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
+
         CREATE TABLE IF NOT EXISTS transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            timestamp TEXT,
-            type TEXT,
-            amount TEXT,
-            currency TEXT
+            user_id INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT,
+            details TEXT,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
-        CREATE TABLE IF NOT EXISTS withdrawals (
+
+        CREATE TABLE IF NOT EXISTS pending_deposits (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            timestamp TEXT,
-            amount REAL,
-            currency TEXT,
-            email TEXT,
-            status TEXT
-        );
-        /* أوامر باينانس للتتبع */
-        CREATE TABLE IF NOT EXISTS binance_orders (
-            merchant_trade_no TEXT PRIMARY KEY,
-            username TEXT,
-            prepay_id TEXT,
-            currency TEXT,
-            amount REAL,
+            user_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            fiat_currency TEXT NOT NULL,
+            pay_method TEXT,
             status TEXT,
-            created_at TEXT
+            txid TEXT,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
-        """)
-        db.commit()
 
-# -----------------------------------
-# إعدادات عامة
-# -----------------------------------
-SUPPORTED_CURRENCIES = ["USD", "EUR", "GBP", "MAD", "AED", "SAR"]
-RATES_CACHE_FILE = 'rates_cache.json'
-RATES_TTL_SEC = 12 * 60 * 60  # 12 ساعة
+        CREATE TABLE IF NOT EXISTS pending_withdrawals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT NOT NULL,
+            payout_info TEXT,
+            status TEXT,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
 
-def ensure_user_balances(username: str):
-    """يضمن وجود صف رصيد لكل عملة مدعومة لهذا المستخدم (مفيد لبيئات بدون قرص دائم مثل Render)."""
-    if not username:
-        return
-    with get_db() as db:
-        for cur in SUPPORTED_CURRENCIES:
-            db.execute("""
-                INSERT OR IGNORE INTO balances (username, currency, amount)
-                VALUES (?, ?, 0.0)
-            """, (username, cur))
-        db.commit()
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            ref_id INTEGER,
+            title TEXT,
+            body TEXT,
+            status TEXT DEFAULT 'unread',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        """
+    )
+    db.close()
 
-def parse_amount(value, *, min_value=0.0, max_value=1_000_000.0):
-    try:
-        amt = float(value)
-    except (TypeError, ValueError):
-        raise ValueError('invalid_amount')
-    if not (min_value <= amt <= max_value):
-        raise ValueError('amount_out_of_range')
-    return round(amt, 2)
 
-def get_exchange_rate(from_currency, to_currency):
-    # كاش
-    try:
-        if os.path.exists(RATES_CACHE_FILE):
-            cache = json.load(open(RATES_CACHE_FILE, 'r', encoding='utf-8'))
-            key = f"{from_currency}->{to_currency}"
-            rec = cache.get(key)
-            if rec and int(time.time()) - int(rec.get("ts", 0)) < RATES_TTL_SEC:
-                return float(rec["rate"])
-    except Exception as ce:
-        logging.warning("Rate cache read failed: %s", ce)
+# استدعاء الإنشاء مرة واحدة عند تحميل الملف
+init_db()
 
-    url = f"https://v6.exchangerate-api.com/v6/{EXCHANGE_API_KEY}/latest/{from_currency}"
-    try:
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
+# ==============================
+# دوال مساعدة على مستوى المستخدمين
+# ==============================
+def create_user(username, email, phone, password_hash, is_admin=False):
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        """
+        INSERT INTO users (username, email, phone, password_hash, is_admin)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (username, email, phone, password_hash, 1 if is_admin else 0),
+    )
+    user_id = cur.lastrowid
 
-        rates = data.get("conversion_rates") or {}
-        if to_currency not in rates:
-            logging.warning("conversion_rates missing target currency: %s", to_currency)
-            return None
-        rate = float(rates[to_currency])
+    # إنشاء رصيد 0 لكل عملة
+    for c in CURRENCIES:
+        cur.execute(
+            "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, ?)",
+            (user_id, c, 0.0),
+        )
 
-        # كتابة الكاش
-        try:
-            cache = {}
-            if os.path.exists(RATES_CACHE_FILE):
-                cache = json.load(open(RATES_CACHE_FILE, 'r', encoding='utf-8'))
-            now = int(time.time())
-            cache_key = f"{from_currency}->{to_currency}"
-            cache[cache_key] = {"rate": rate, "ts": now}
-            with tempfile.NamedTemporaryFile('w', delete=False, dir='.', encoding='utf-8') as tmp:
-                json.dump(cache, tmp, ensure_ascii=False, indent=2)
-                tmp_path = tmp.name
-            os.replace(tmp_path, RATES_CACHE_FILE)
-        except Exception as we:
-            logging.warning("Rate cache write failed: %s", we)
-        return rate
-    except Exception as e:
-        logging.exception("Exchange rate fetch failed: %s", e)
+    db.commit()
+    return user_id
+
+
+def get_user(username):
+    """إرجاع dict يمثل المستخدم مع الأرصدة + المعاملات."""
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM users WHERE username = ?", (username,)
+    ).fetchone()
+    if not row:
         return None
 
-# --------- Binance Pay أدوات ---------
-def _rand_merchant_trade_no():
-    return uuid.uuid4().hex[:32]  # <= 32
+    user_id = row["id"]
 
-def _binance_sign_headers(body: dict):
-    if not BINANCE_API_KEY or not BINANCE_API_SECRET:
-        return None
-    ts = str(int(time.time() * 1000))
-    nonce = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
-    body_json = json.dumps(body, separators=(',', ':'), ensure_ascii=False)
-    payload = f"{ts}\n{nonce}\n{body_json}\n"
-    signature = hmac.new(BINANCE_API_SECRET.encode('utf-8'),
-                         payload.encode('utf-8'),
-                         hashlib.sha512).hexdigest().upper()
-    headers = {
-        "Content-Type": "application/json",
-        "BinancePay-Timestamp": ts,
-        "BinancePay-Nonce": nonce,
-        "BinancePay-Certificate-SN": BINANCE_API_KEY,
-        "BinancePay-Signature": signature,
-        "BinancePay-Signature-Type": "SHA512",   # مهم لبعض الإعدادات
+    # الأرصدة
+    balances_rows = db.execute(
+        "SELECT currency, amount FROM balances WHERE user_id = ?", (user_id,)
+    ).fetchall()
+    balance = {c: 0.0 for c in CURRENCIES}
+    for b in balances_rows:
+        if b["currency"] in balance:
+            balance[b["currency"]] = float(b["amount"] or 0.0)
+
+    # المعاملات
+    tx_rows = db.execute(
+        """
+        SELECT type, amount, currency, details, timestamp
+        FROM transactions
+        WHERE user_id = ?
+        ORDER BY timestamp ASC
+        """,
+        (user_id,),
+    ).fetchall()
+    transactions = [
+        {
+            "type": t["type"],
+            "amount": float(t["amount"]),
+            "currency": t["currency"],
+            "details": t["details"],
+            "timestamp": t["timestamp"],
+        }
+        for t in tx_rows
+    ]
+
+    return {
+        "id": user_id,
+        "username": row["username"],
+        "email": row["email"],
+        "phone": row["phone"],
+        "password_hash": row["password_hash"],
+        "is_admin": bool(row["is_admin"]),
+        "balance": balance,
+        "transactions": transactions,
     }
-    return headers, body_json
 
-def _binance_post(path: str, body: dict):
-    hb = _binance_sign_headers(body)
-    if not hb:
-        raise RuntimeError("Binance Pay is not configured")
-    headers, body_json = hb
-    url = f"{BINANCE_HOST}{path}"
-    r = requests.post(url, headers=headers, data=body_json, timeout=15)
 
-    # أعد JSON حتى مع حالات != 200 لتشخيص أوضح
-    try:
-        data = r.json()
-    except Exception:
-        data = {"status_code": r.status_code, "text": r.text}
+def change_balance(user_id, currency, delta):
+    """زيادة/إنقاص رصيد عملة معينة للمستخدم."""
+    db = get_db()
+    # تأكد أن صف الرصيد موجود
+    db.execute(
+        "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, 0)",
+        (user_id, currency),
+    )
+    db.execute(
+        "UPDATE balances SET amount = amount + ? WHERE user_id = ? AND currency = ?",
+        (float(delta), user_id, currency),
+    )
+    db.commit()
 
-    if r.status_code != 200:
-        logging.error("Binance HTTP %s: %s", r.status_code, data)
-    return data, r.status_code
 
-def _get_btc_usd():
-    try:
-        r = requests.get("https://api.binance.com/api/v3/ticker/price", params={"symbol":"BTCUSDT"}, timeout=10)
-        r.raise_for_status()
-        return float(r.json()["price"])  # USDT لكل BTC
-    except Exception as e:
-        logging.warning("BTCUSDT price fetch failed: %s", e)
-        return None
+def log_transaction(user_id, tx_type, amount, currency, details=""):
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user_id,
+            tx_type,
+            float(amount),
+            currency,
+            details,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+    db.commit()
 
-# -----------------------------------
-# المصادقة
-# -----------------------------------
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    with get_db() as db:
-        if request.method == 'POST':
-            username = request.form['username'].strip()
-            password = request.form['password']
-            if not username or not password:
-                flash("⚠️ يرجى إدخال اسم المستخدم وكلمة المرور", 'error')
-                return redirect(url_for('register'))
-            row = db.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone()
-            if row:
-                flash("⚠️ اسم المستخدم موجود مسبقًا", 'error')
-                return redirect(url_for('register'))
-            db.execute("INSERT INTO users(username, password_hash, is_admin) VALUES(?,?,?)",
-                       (username, generate_password_hash(password),
-                        1 if username == (os.getenv("ADMIN_USERNAME") or "") else 0))
-            for cur in SUPPORTED_CURRENCIES:
-                db.execute("INSERT INTO balances(username, currency, amount) VALUES(?,?,?)", (username, cur, 0.0))
-            db.commit()
-            flash("✅ تم إنشاء الحساب بنجاح", 'success')
-            return redirect(url_for('login'))
-    return render_template('register.html')
 
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    with get_db() as db:
-        if request.method == 'POST':
-            username = request.form['username'].strip()
-            password = request.form['password']
-            row = db.execute("SELECT password_hash, is_admin FROM users WHERE username=?", (username,)).fetchone()
-            if row and check_password_hash(row["password_hash"], password):
-                session['username'] = username
-                session['is_admin'] = bool(row['is_admin'])
-                # يضمن ظهور العملات حتى في قواعد بيانات جديدة على Render
-                ensure_user_balances(username)
-                return redirect(url_for('index'))
-            flash("❌ اسم المستخدم أو كلمة المرور غير صحيح", 'error')
-    return render_template('login.html')
+# ==============================
+# دوال الإشعارات
+# ==============================
+def create_notification(user_id, kind, title, body, ref_id=None):
+    """
+    kind: 'deposit' أو 'withdrawal'
+    status: تبدأ دائماً unread
+    """
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO notifications (user_id, kind, ref_id, title, body, status, created_at)
+        VALUES (?, ?, ?, ?, ?, 'unread', ?)
+        """,
+        (
+            user_id,
+            kind,
+            ref_id,
+            title,
+            body,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+    db.commit()
 
-@app.route('/logout')
-def logout():
-    session.pop('username', None)
-    session.pop('is_admin', None)
-    return redirect(url_for('login'))
 
-# -----------------------------------
-# الواجهة الرئيسية
-# -----------------------------------
-@app.route('/')
+def count_unread_notifications(user_id):
+    db = get_db()
+    row = db.execute(
+        "SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND status = 'unread'",
+        (user_id,),
+    ).fetchone()
+    return (row["c"] or 0) if row else 0
+
+
+# ==============================
+# المسارات الأساسية (المستخدم)
+# ==============================
+@app.route("/")
 def index():
-    if 'username' not in session:
-        return redirect(url_for('login'))
+    if "username" not in session:
+        return redirect(url_for("login"))
 
-    # شبكة أمان لإظهار العملات دائمًا (خاصة على Render)
-    ensure_user_balances(session['username'])
+    user = get_user(session["username"])
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
 
-    with get_db() as db:
-        bals = db.execute("SELECT currency, amount FROM balances WHERE username=?", (session['username'],)).fetchall()
-        txs = db.execute("SELECT timestamp, type, amount, currency FROM transactions WHERE username=? ORDER BY id DESC LIMIT 50",
-                         (session['username'],)).fetchall()
-        wcount = db.execute("SELECT COUNT(*) as c FROM withdrawals WHERE username=? AND status='pending'",
-                            (session['username'],)).fetchone()["c"]
-    balances = {row["currency"]: row["amount"] for row in bals}
-    return render_template('index.html',
-                           balances=balances,
-                           transactions=txs,
-                           pending_withdrawals_count=wcount,
-                           supported=SUPPORTED_CURRENCIES,
-                           binance_enabled=bool(BINANCE_API_KEY and BINANCE_API_SECRET))
+    unread_notifications = count_unread_notifications(user["id"])
 
-# -----------------------------------
-# تحويل الرصيد بين العملات
-# -----------------------------------
-@app.route('/convert_balance', methods=['POST'])
-def convert_balance():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    from_currency = (request.form.get('from_currency') or '').upper()
-    to_currency = (request.form.get('to_currency') or '').upper()
+    return render_template(
+        "index.html",
+        username=user["username"],
+        user=user,
+        currencies=CURRENCIES,
+        currency_to_country=CURRENCY_TO_COUNTRY,
+        binance_uid=BINANCE_UID,
+        binance_auto_100_url=BINANCE_AUTO_100_URL,
+        unread_notifications=unread_notifications,
+    )
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
+        user = get_user(username)
+        if user and check_password_hash(user.get("password_hash", ""), password):
+            session["username"] = username
+            session["is_admin"] = bool(user.get("is_admin", False))
+            return redirect(url_for("index"))
+
+        flash("❌ اسم المستخدم أو كلمة المرور غير صحيحة", "error")
+
+    return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        email = request.form.get("email", "").strip()
+        phone = request.form.get("phone", "").strip()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+
+        # تحقق أساسي من المدخلات
+        if not username or not password:
+            flash("❌ يجب إدخال اسم مستخدم وكلمة مرور", "error")
+            return render_template("register.html")
+
+        if password != confirm:
+            flash("❌ كلمتا المرور غير متطابقتين", "error")
+            return render_template("register.html")
+
+        # اسم المستخدم موجود؟
+        if get_user(username):
+            flash("❌ اسم المستخدم موجود بالفعل", "error")
+            return render_template("register.html")
+
+        hashed_pw = generate_password_hash(password)
+
+        try:
+            create_user(username, email, phone, hashed_pw, is_admin=False)
+        except sqlite3.IntegrityError:
+            flash("❌ اسم المستخدم موجود بالفعل", "error")
+            return render_template("register.html")
+
+        flash("✅ تم إنشاء الحساب بنجاح", "success")
+        return redirect(url_for("login"))
+
+    return render_template("register.html")
+
+
+@app.route("/convert_currency", methods=["POST"])
+def convert_currency_route():
+    if "username" not in session:
+        return jsonify({"success": False, "message": "يجب تسجيل الدخول أولاً"}), 401
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"success": False, "message": "بيانات غير صحيحة"}), 400
+
+    from_currency = data.get("from")
+    to_currency = data.get("to")
+    amount_str = str(data.get("amount"))
+
+    if not from_currency or not to_currency or not amount_str:
+        return jsonify({"success": False, "message": "جميع الحقول مطلوبة"}), 400
+
+    if from_currency not in CURRENCIES or to_currency not in CURRENCIES:
+        return jsonify({"success": False, "message": "عملة غير مدعومة"}), 400
+
+    # تحويل المبلغ إلى Decimal
     try:
-        amount = parse_amount(request.form.get('amount'))
+        amount = Decimal(amount_str)
+        if amount <= 0:
+            return jsonify({"success": False, "message": "المبلغ يجب أن يكون أكبر من صفر"}), 400
     except Exception:
-        flash('❌ مبلغ غير صالح', 'error')
-        return redirect(url_for('index'))
-    if from_currency == to_currency:
-        flash('❌ لا يمكن تحويل نفس العملة', 'error')
-        return redirect(url_for('index'))
+        return jsonify({"success": False, "message": "المبلغ غير صالح"}), 400
 
-    rate = get_exchange_rate(from_currency, to_currency)
-    if not rate:
-        flash('❌ تعذر جلب سعر الصرف', 'error')
-        return redirect(url_for('index'))
+    username = session["username"]
+    user = get_user(username)
+    if not user:
+        session.clear()
+        return jsonify({"success": False, "message": "المستخدم غير موجود"}), 400
 
-    converted = round(amount * rate, 2)
-    with get_db() as db:
-        bal_from = db.execute("SELECT amount FROM balances WHERE username=? AND currency=?",
-                              (session['username'], from_currency)).fetchone()
-        if not bal_from or bal_from['amount'] < amount:
-            flash('❌ الرصيد غير كافٍ', 'error')
-            return redirect(url_for('index'))
-        db.execute("UPDATE balances SET amount = amount - ? WHERE username=? AND currency=?",
-                   (amount, session['username'], from_currency))
-        db.execute("UPDATE balances SET amount = amount + ? WHERE username=? AND currency=?",
-                   (converted, session['username'], to_currency))
-        db.execute("INSERT INTO transactions(username, timestamp, type, amount, currency) VALUES(?,?,?,?,?)",
-                   (session['username'], datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    f'تحويل من {from_currency} إلى {to_currency}', f'{amount} → {converted}', to_currency))
-        db.commit()
-    flash('✅ تم التحويل بنجاح', 'success')
-    return redirect(url_for('index'))
-
-# -----------------------------------
-# Binance Pay: إنشاء طلب + العودة + استعلام الحالة
-# -----------------------------------
-@app.route('/binance/create_order', methods=['POST'])
-@csrf.exempt  # إعفاء لأن الطلب يُرسل عبر fetch JSON بدون تضمين رمز CSRF
-def binance_create_order():
-    if 'username' not in session:
-        return jsonify({'ok': False, 'error': 'auth'}), 401
-    if not (BINANCE_API_KEY and BINANCE_API_SECRET):
-        return jsonify({'ok': False, 'error': 'not_configured'}), 500
-
-    data = request.get_json(silent=True) or {}
-    try:
-        amount = parse_amount(data.get('amount'), min_value=0.5)
-    except Exception:
-        return jsonify({'ok': False, 'error': 'invalid_amount'}), 400
-
-    crypto = (data.get('crypto') or '').upper()
-    if crypto not in ('USDT', 'BTC'):
-        return jsonify({'ok': False, 'error': 'unsupported_crypto'}), 400
-
-    trade_no = _rand_merchant_trade_no()
-
-    body = {
-        "env": {"terminalType": "WEB"},
-        "merchantTradeNo": trade_no,
-        "orderAmount": float(amount),
-        "currency": crypto,  # USDT أو BTC
-        "description": f"Top-up for {session['username']}",
-        "goodsDetails": [{
-            "goodsType": "02",
-            "goodsCategory": "Z000",
-            "referenceGoodsId": trade_no,
-            "goodsName": "Account Balance Top-up"
-        }],
-        "returnUrl": url_for('binance_return', _external=True) + f"?mtn={trade_no}",
-        "cancelUrl": url_for('index', _external=True)
-    }
+    # رصيد العملة المرسِل منها
+    current_from_balance = user["balance"].get(from_currency, 0.0)
+    if current_from_balance < float(amount):
+        return jsonify({"success": False, "message": f"الرصيد غير كافٍ في {from_currency}"}), 400
 
     try:
-        res, http_status = _binance_post("/binancepay/openapi/v3/order", body)
-        if not (isinstance(res, dict) and res.get("status") == "SUCCESS" and res.get("code") == "000000"):
-            logging.error("Binance create order failed (HTTP %s): %s", http_status, res)
-            return jsonify({'ok': False, 'error': 'binance_fail', 'detail': res}), 502
+        # استخدام الدالة من currency_converter.converter (سعر صرف حقيقي + كاش داخلي)
+        converted_raw = convert_currency(amount, from_currency, to_currency)
+        converted_dec = Decimal(str(converted_raw)).quantize(
+            Decimal("0.01"), rounding=ROUND_DOWN
+        )
 
-        data_obj = res.get("data") or {}
-        checkout_url = data_obj.get("checkoutUrl") or data_obj.get("universalUrl")
-        prepay_id = data_obj.get("prepayId")
+        # حساب سعر الصرف الفعلي
+        rate_dec = (converted_dec / amount).quantize(Decimal("0.0001"))
 
-        with get_db() as db:
-            db.execute("""INSERT OR REPLACE INTO binance_orders
-                          (merchant_trade_no, username, prepay_id, currency, amount, status, created_at)
-                          VALUES (?,?,?,?,?,?,?)""",
-                       (trade_no, session['username'], prepay_id, crypto, amount, "INITIAL",
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-            db.commit()
+        # تحديث الأرصدة في قاعدة البيانات
+        change_balance(user["id"], from_currency, -float(amount))
+        change_balance(user["id"], to_currency, float(converted_dec))
 
-        return jsonify({'ok': True, 'url': checkout_url})
+        # تسجيل تحويل واحد فقط (بدون تكرار)
+        details = f"{amount} {from_currency} → {converted_dec} {to_currency}"
+        log_transaction(
+            user["id"],
+            "Currency Conversion",
+            float(amount),
+            from_currency,
+            details,
+        )
+
+        # جلب الأرصدة الجديدة بعد التحديث
+        updated_user = get_user(username)
+        balances = updated_user["balance"] if updated_user and "balance" in updated_user else {}
+
+        return jsonify(
+            {
+                "success": True,
+                "converted_amount": f"{converted_dec}",
+                "rate": f"{rate_dec:.4f}",
+                "balances": balances,  # لتحديث الواجهة فوراً
+            }
+        )
+
+    except RuntimeError as e:
+        # مشكلة في مزود أسعار الصرف (API)
+        logging.error(f"Currency API error: {e}")
+        return jsonify(
+            {
+                "success": False,
+                "message": "تعذر جلب سعر الصرف من مزوّد الأسعار الخارجي، يرجى المحاولة لاحقاً.",
+            }
+        ), 502
+
     except Exception as e:
-        logging.exception("Binance create order exception: %s", e)
-        return jsonify({'ok': False, 'error': 'exception', 'detail': str(e)}), 500
+        logging.error(f"Currency conversion error: {e}")
+        return jsonify(
+            {"success": False, "message": "خطأ أثناء تحويل العملات"}
+        ), 500
 
-@app.route('/binance/return', methods=['GET'])
-def binance_return():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    if not (BINANCE_API_KEY and BINANCE_API_SECRET):
-        flash('Binance Pay غير مُعد.', 'error')
-        return redirect(url_for('index'))
 
-    trade_no = (request.args.get('mtn') or '').strip()
-    if not trade_no:
-        flash('طلب غير معروف.', 'error')
-        return redirect(url_for('index'))
+# ==============================
+# Binance Pay Top-up (UID + Proof)
+# ==============================
+@app.route("/binance_topup", methods=["POST"])
+def binance_topup():
+    if "username" not in session:
+        flash("يجب تسجيل الدخول أولاً", "error")
+        return redirect(url_for("login"))
+
+    username = session["username"]
+    user = get_user(username)
+    if not user:
+        session.clear()
+        flash("حصل خطأ في بيانات المستخدم", "error")
+        return redirect(url_for("login"))
+
+    amount_str = request.form.get("amount", "0").strip()
+    fiat_currency = request.form.get("fiat_currency")
+    txid = (request.form.get("txid") or "").strip()
 
     try:
-        res, http_status = _binance_post("/binancepay/openapi/v2/order/query", {"merchantTradeNo": trade_no})
-        if not (isinstance(res, dict) and res.get("status") == "SUCCESS" and res.get("code") == "000000"):
-            logging.error("Binance order query failed (HTTP %s): %s", http_status, res)
-            flash('تعذر التحقق من حالة الدفع.', 'error')
-            return redirect(url_for('index'))
-
-        data_obj = res.get("data") or {}
-        status = (data_obj.get("status") or "INITIAL").upper()
-        currency = (data_obj.get("currency") or "").upper()
-        order_amount = float(data_obj.get("orderAmount") or 0)
-
-        if status != "PAID":
-            with get_db() as db:
-                db.execute("UPDATE binance_orders SET status=? WHERE merchant_trade_no=?", (status, trade_no))
-                db.commit()
-            flash('الدفع قيد المعالجة أو لم يكتمل بعد. حاول لاحقاً.', 'error')
-            return redirect(url_for('index'))
-
-        # اعتماد الرصيد بـ USD
-        usd_credit = 0.0
-        if currency == "USDT":
-            usd_credit = round(order_amount, 2)  # ~1:1
-        elif currency == "BTC":
-            px = _get_btc_usd()
-            if not px:
-                flash('تم الدفع، لكن تعذر جلب سعر BTC حالياً.', 'error')
-                return redirect(url_for('index'))
-            usd_credit = round(order_amount * px, 2)
-        else:
-            rate = get_exchange_rate(currency, "USD")
-            if not rate:
-                flash('تم الدفع، لكن تعذر تحويل العملة إلى USD.', 'error')
-                return redirect(url_for('index'))
-            usd_credit = round(order_amount * rate, 2)
-
-        with get_db() as db:
-            db.execute("UPDATE binance_orders SET status=? WHERE merchant_trade_no=?", ("PAID", trade_no))
-            db.execute("UPDATE balances SET amount = amount + ? WHERE username=? AND currency=?",
-                       (usd_credit, session['username'], "USD"))
-            db.execute("INSERT INTO transactions(username, timestamp, type, amount, currency) VALUES(?,?,?,?,?)",
-                       (session['username'], datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "💳 Binance Pay Deposit", f"{order_amount} {currency} → {usd_credit}", "USD"))
-            db.commit()
-
-        flash('✅ تم شحن الرصيد عبر Binance Pay بنجاح.', 'success')
-        return redirect(url_for('index'))
-    except Exception as e:
-        logging.exception("Binance return/query error: %s", e)
-        flash('تعذر إكمال التحقق من الدفع.', 'error')
-        return redirect(url_for('index'))
-
-# -----------------------------------
-# السحب اليدوي (احتفظنا به كما هو)
-# -----------------------------------
-@app.route('/withdraw', methods=['POST'])
-def withdraw():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    try:
-        amount = parse_amount(request.form.get('withdraw_amount'), min_value=1.0)
+        amount = Decimal(amount_str)
     except Exception:
-        flash('❌ مبلغ غير صالح للسحب', 'error')
-        return redirect(url_for('index'))
-    currency = (request.form.get('withdraw_currency') or '').upper()
-    email = (request.form.get('paypal_email') or '').strip()  # يمكنك لاحقاً تغيير الاسم إلى جهة السحب
-    if not email or '@' not in email:
-        flash('❌ بريد غير صالح', 'error')
-        return redirect(url_for('index'))
-    if currency not in SUPPORTED_CURRENCIES:
-        flash('❌ عملة غير مدعومة', 'error')
-        return redirect(url_for('index'))
+        flash("❌ يرجى إدخال مبلغ صحيح", "error")
+        return redirect(url_for("index"))
 
-    with get_db() as db:
-        bal = db.execute("SELECT amount FROM balances WHERE username=? AND currency=?",
-                         (session['username'], currency)).fetchone()
-        if not bal or bal['amount'] < amount:
-            flash('❌ الرصيد غير كافٍ للسحب', 'error')
-            return redirect(url_for('index'))
-        db.execute("INSERT INTO withdrawals(username, timestamp, amount, currency, email, status) VALUES(?,?,?,?,?, 'pending')",
-                   (session['username'], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), amount, currency, email))
-        db.commit()
+    if amount <= 0:
+        flash("❌ المبلغ يجب أن يكون أكبر من صفر", "error")
+        return redirect(url_for("index"))
 
-    flash('✅ تم إرسال طلب السحب بنجاح. سيُعالج يدويًا.', 'success')
-    return redirect(url_for('index'))
+    if fiat_currency not in CURRENCIES:
+        flash("❌ عملة غير مدعومة", "error")
+        return redirect(url_for("index"))
 
-# -----------------------------------
-# لوحة الإدارة (مختصر: نظرة عامة + سحوبات)
-# -----------------------------------
-@app.route('/admin/withdrawals', methods=['GET'])
-def admin_withdrawals():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    if not session.get('is_admin') and session.get('username') != (os.getenv('ADMIN_USERNAME') or ''):
-        flash("غير مصرح.", "error")
-        return redirect(url_for('index'))
+    if not txid:
+        flash("❌ يجب إدخال TxID أو ملاحظة عن التحويل", "error")
+        return redirect(url_for("index"))
 
-    with get_db() as db:
-        rows = db.execute("SELECT id, username, timestamp, amount, currency, email, status FROM withdrawals ORDER BY id DESC").fetchall()
-    return render_template('admin_withdrawals.html', withdrawals=rows)
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO pending_deposits
+        (user_id, amount, fiat_currency, pay_method, status, txid, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user["id"],
+            float(amount),
+            fiat_currency,
+            "Binance Pay",
+            "pending",
+            txid,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+    db.commit()
 
-@app.route('/admin/withdrawals/<int:wid>/approve', methods=['POST'])
-def approve_withdrawal(wid):
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    if not session.get('is_admin') and session.get('username') != (os.getenv('ADMIN_USERNAME') or ''):
-        flash("غير مصرح.", "error")
-        return redirect(url_for('index'))
+    log_transaction(
+        user["id"],
+        "Binance Topup Request",
+        amount,
+        fiat_currency,
+        details=f"UID={BINANCE_UID}, txid={txid}",
+    )
 
-    with get_db() as db:
-        w = db.execute("SELECT username, amount, currency, status FROM withdrawals WHERE id=?", (wid,)).fetchone()
-        if not w or w["status"] != "pending":
-            flash("طلب غير صالح", "error")
-            return redirect(url_for('admin_withdrawals'))
-        db.execute("UPDATE balances SET amount = amount - ? WHERE username=? AND currency=?",
-                   (w["amount"], w["username"], w["currency"]))
-        db.execute("UPDATE withdrawals SET status='approved' WHERE id=?", (wid,))
-        db.commit()
-    flash("✅ تم اعتماد السحب", "success")
-    return redirect(url_for('admin_withdrawals'))
+    flash("✅ تم تسجيل طلب الشحن، سيتم التحقق من التحويل وإضافة الرصيد يدويًا.", "success")
+    return redirect(url_for("index"))
 
-@app.route('/admin/withdrawals/<int:wid>/reject', methods=['POST'])
-def reject_withdrawal(wid):
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    if not session.get('is_admin') and session.get('username') != (os.getenv('ADMIN_USERNAME') or ''):
-        flash("غير مصرح.", "error")
-        return redirect(url_for('index'))
 
-    with get_db() as db:
-        w = db.execute("SELECT id, status FROM withdrawals WHERE id=?", (wid,)).fetchone()
-        if not w or w["status"] != "pending":
-            flash("طلب غير صالح", "error")
-            return redirect(url_for('admin_withdrawals'))
-        db.execute("UPDATE withdrawals SET status='rejected' WHERE id=?", (wid,))
-        db.commit()
-    flash("❌ تم رفض السحب", "success")
-    return redirect(url_for('admin_withdrawals'))
+@app.route("/binance_deposit_proof", methods=["POST"])
+def binance_deposit_proof():
+    if "username" not in session:
+        flash("يجب تسجيل الدخول أولاً", "error")
+        return redirect(url_for("login"))
 
-@app.route('/admin/overview')
+    from decimal import InvalidOperation
+
+    amount_raw = request.form.get("amount", "0")
+    currency = request.form.get("currency")
+    txid = (request.form.get("txid") or "").strip()
+
+    try:
+        amount = Decimal(str(amount_raw))
+    except InvalidOperation:
+        flash("❌ مبلغ غير صالح", "error")
+        return redirect(url_for("index"))
+
+    if amount <= 0 or currency not in CURRENCIES or not txid:
+        flash("❌ يرجى إدخال بيانات صحيحة للشحن", "error")
+        return redirect(url_for("index"))
+
+    username = session["username"]
+    user = get_user(username)
+    if not user:
+        session.clear()
+        flash("خطأ في بيانات المستخدم", "error")
+        return redirect(url_for("login"))
+
+    log_transaction(
+        user["id"],
+        "Binance Deposit Proof",
+        amount,
+        currency,
+        details=f"TXID/Proof: {txid}",
+    )
+
+    flash("✅ تم إرسال إثبات الشحن، سيتم مراجعة الطلب يدويًا.", "success")
+    return redirect(url_for("index"))
+
+
+@app.route("/withdraw_request", methods=["POST"])
+def withdraw_request():
+    if "username" not in session:
+        flash("يجب تسجيل الدخول أولاً", "error")
+        return redirect(url_for("login"))
+
+    from decimal import InvalidOperation
+
+    amount_raw = request.form.get("amount", "0")
+    currency = request.form.get("currency")
+    payout_info = (request.form.get("payout_info") or "").strip()
+
+    try:
+        amount = Decimal(str(amount_raw))
+    except InvalidOperation:
+        flash("❌ مبلغ غير صالح", "error")
+        return redirect(url_for("index"))
+
+    if amount <= 0 or currency not in CURRENCIES or not payout_info:
+        flash("❌ يرجى إدخال بيانات صحيحة لطلب السحب", "error")
+        return redirect(url_for("index"))
+
+    username = session["username"]
+    user = get_user(username)
+    if not user:
+        session.clear()
+        flash("خطأ في بيانات المستخدم", "error")
+        return redirect(url_for("login"))
+
+    if user["balance"].get(currency, 0.0) < float(amount):
+        flash("❌ الرصيد غير كافٍ", "error")
+        return redirect(url_for("index"))
+
+    # خصم الرصيد
+    change_balance(user["id"], currency, -float(amount))
+
+    # إضافة إلى جدول طلبات السحب المعلقة
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO pending_withdrawals
+        (user_id, amount, currency, payout_info, status, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user["id"],
+            float(amount),
+            currency,
+            payout_info,
+            "pending",
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+    db.commit()
+
+    log_transaction(
+        user["id"],
+        "Withdraw Request",
+        amount,
+        currency,
+        details=f"Payout info: {payout_info}",
+    )
+
+    flash("📤 تم إرسال طلب السحب، سيتم معالجته يدويًا.", "success")
+    return redirect(url_for("index"))
+
+
+# ==============================
+# لوحة تحكم الأدمن + التصدير
+# ==============================
+def _ensure_admin():
+    """تفقد أن المستخدم أدمن وإلا يرجع None."""
+    if "username" not in session:
+        return None
+    user = get_user(session["username"])
+    if not user or not user["is_admin"]:
+        return None
+    return user
+
+
+@app.route("/admin/overview")
 def admin_overview():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    if not session.get('is_admin') and session.get('username') != (os.getenv('ADMIN_USERNAME') or ''):
-        flash("غير مصرح.", "error")
-        return redirect(url_for('index'))
+    admin = _ensure_admin()
+    if not admin:
+        flash("🚫 غير مسموح بالدخول إلى لوحة الإدارة", "error")
+        return redirect(url_for("index"))
 
-    try:
-        page = int(request.args.get('page', 1))
-    except (TypeError, ValueError):
+    db = get_db()
+
+    # فلاتر البحث
+    username_f = (request.args.get("username") or "").strip() or None
+    currency_f = (request.args.get("currency") or "").strip().upper() or None
+    start_date = request.args.get("start_date") or None
+    end_date = request.args.get("end_date") or None
+    page = request.args.get("page", 1, type=int)
+    per_page = 30
+
+    # إجمالي الأرصدة حسب العملة
+    totals = db.execute(
+        "SELECT currency, SUM(amount) AS total FROM balances GROUP BY currency"
+    ).fetchall()
+
+    # قائمة المستخدمين
+    users = db.execute(
+        "SELECT username, is_admin FROM users ORDER BY id DESC"
+    ).fetchall()
+
+    # الأرصدة لكل مستخدم/عملة
+    balances = db.execute(
+        """
+        SELECT u.username, b.currency, b.amount
+        FROM balances b
+        JOIN users u ON b.user_id = u.id
+        ORDER BY u.username, b.currency
+        """
+    ).fetchall()
+
+    # بناء جملة WHERE للمعاملات
+    conditions = []
+    params = []
+
+    if username_f:
+        conditions.append("u.username = ?")
+        params.append(username_f)
+    if currency_f:
+        conditions.append("t.currency = ?")
+        params.append(currency_f)
+    if start_date:
+        conditions.append("date(t.timestamp) >= date(?)")
+        params.append(start_date)
+    if end_date:
+        conditions.append("date(t.timestamp) <= date(?)")
+        params.append(end_date)
+
+    where_clause = ""
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+    # عدد السجلات
+    count_row = db.execute(
+        f"""
+        SELECT COUNT(*) AS c
+        FROM transactions t
+        JOIN users u ON t.user_id = u.id
+        {where_clause}
+        """,
+        params,
+    ).fetchone()
+    total_records = count_row["c"] if count_row else 0
+    total_pages = max((total_records + per_page - 1) // per_page, 1)
+    if page < 1:
         page = 1
-    PER_PAGE = 50
-    offset = (page - 1) * PER_PAGE
+    if page > total_pages:
+        page = total_pages
 
-    username_f = (request.args.get('username') or '').strip()
-    currency_f = (request.args.get('currency') or '').strip().upper()
-    start_date = (request.args.get('start_date') or '').strip()
-    end_date = (request.args.get('end_date') or '').strip()
+    offset = (page - 1) * per_page
 
-    where, params = [], []
-    if start_date: where.append("date(timestamp) >= ?"); params.append(start_date)
-    if end_date:   where.append("date(timestamp) <= ?"); params.append(end_date)
-    if username_f: where.append("username = ?");        params.append(username_f)
-    if currency_f: where.append("currency = ?");        params.append(currency_f)
-    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
-
-    with get_db() as db:
-        users = db.execute("SELECT username, is_admin FROM users ORDER BY username").fetchall()
-        balances = db.execute("SELECT username, currency, amount FROM balances ORDER BY username, currency").fetchall()
-
-        total = db.execute(f"SELECT COUNT(*) as c FROM transactions{where_sql}", params).fetchone()["c"]
-        total_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
-        transactions = db.execute(
-            f"SELECT username, timestamp, type, amount, currency FROM transactions {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?",
-            (*params, PER_PAGE, offset)
-        ).fetchall()
-
-        if username_f:
-            totals = db.execute("SELECT currency, SUM(amount) as total FROM balances WHERE username=? GROUP BY currency",
-                                (username_f,)).fetchall()
-        else:
-            totals = db.execute("SELECT currency, SUM(amount) as total FROM balances GROUP BY currency").fetchall()
+    transactions = db.execute(
+        f"""
+        SELECT t.id, u.username, t.type, t.amount, t.currency, t.timestamp
+        FROM transactions t
+        JOIN users u ON t.user_id = u.id
+        {where_clause}
+        ORDER BY t.timestamp DESC
+        LIMIT ? OFFSET ?
+        """,
+        (*params, per_page, offset),
+    ).fetchall()
 
     prev_page = page - 1 if page > 1 else None
     next_page = page + 1 if page < total_pages else None
 
-    return render_template('admin_overview.html',
-                           users=users, balances=balances, transactions=transactions, totals=totals,
-                           page=page, total_pages=total_pages, prev_page=prev_page, next_page=next_page,
-                           username_f=username_f, currency_f=currency_f, start_date=start_date, end_date=end_date)
+    return render_template(
+        "admin.html",
+        totals=totals,
+        users=users,
+        balances=balances,
+        transactions=transactions,
+        username_f=username_f or "",
+        currency_f=currency_f or "",
+        start_date=start_date or "",
+        end_date=end_date or "",
+        page=page,
+        total_pages=total_pages,
+        prev_page=prev_page,
+        next_page=next_page,
+    )
 
-# ======= (مُضاف) تصدير CSV =======
-@app.route('/admin/export/transactions.csv')
+
+@app.route("/admin/export/transactions")
 def export_transactions_csv():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    if not session.get('is_admin') and session.get('username') != (os.getenv('ADMIN_USERNAME') or ''):
-        flash("غير مصرح.", "error")
-        return redirect(url_for('index'))
+    admin = _ensure_admin()
+    if not admin:
+        abort(403)
 
-    import csv, io
-    username_f = (request.args.get('username') or '').strip()
-    currency_f = (request.args.get('currency') or '').strip().upper()
-    start_date = (request.args.get('start_date') or '').strip()
-    end_date = (request.args.get('end_date') or '').strip()
+    db = get_db()
 
-    where, params = [], []
-    if start_date: where.append("date(timestamp) >= ?"); params.append(start_date)
-    if end_date:   where.append("date(timestamp) <= ?"); params.append(end_date)
-    if username_f: where.append("username = ?");        params.append(username_f)
-    if currency_f: where.append("currency = ?");        params.append(currency_f)
-    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    username_f = (request.args.get("username") or "").strip() or None
+    currency_f = (request.args.get("currency") or "").strip().upper() or None
+    start_date = request.args.get("start_date") or None
+    end_date = request.args.get("end_date") or None
 
-    with get_db() as db:
+    conditions = []
+    params = []
+
+    if username_f:
+        conditions.append("u.username = ?")
+        params.append(username_f)
+    if currency_f:
+        conditions.append("t.currency = ?")
+        params.append(currency_f)
+    if start_date:
+        conditions.append("date(t.timestamp) >= date(?)")
+        params.append(start_date)
+    if end_date:
+        conditions.append("date(t.timestamp) <= date(?)")
+        params.append(end_date)
+
+    where_clause = ""
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+    rows = db.execute(
+        f"""
+        SELECT u.username, t.type, t.amount, t.currency, t.details, t.timestamp
+        FROM transactions t
+        JOIN users u ON t.user_id = u.id
+        {where_clause}
+        ORDER BY t.timestamp DESC
+        """,
+        params,
+    ).fetchall()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["username", "type", "amount", "currency", "details", "timestamp"])
+    for r in rows:
+        writer.writerow(
+            [r["username"], r["type"], r["amount"], r["currency"], r["details"], r["timestamp"]]
+        )
+
+    csv_data = output.getvalue()
+    output.close()
+
+    return Response(
+        csv_data,
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=transactions.csv",
+        },
+    )
+
+
+@app.route("/admin/export/balances")
+def export_balances_csv():
+    admin = _ensure_admin()
+    if not admin:
+        abort(403)
+
+    db = get_db()
+
+    username_f = (request.args.get("username") or "").strip() or None
+
+    if username_f:
         rows = db.execute(
-            f"SELECT username, timestamp, type, amount, currency FROM transactions{where_sql} ORDER BY id DESC",
-            params
+            """
+            SELECT u.username, b.currency, b.amount
+            FROM balances b
+            JOIN users u ON b.user_id = u.id
+            WHERE u.username = ?
+            ORDER BY u.username, b.currency
+            """,
+            (username_f,),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            """
+            SELECT u.username, b.currency, b.amount
+            FROM balances b
+            JOIN users u ON b.user_id = u.id
+            ORDER BY u.username, b.currency
+            """
         ).fetchall()
 
-    out = io.StringIO()
-    w = csv.writer(out)
-    w.writerow(["username", "timestamp", "type", "amount", "currency"])
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["username", "currency", "amount"])
     for r in rows:
-        w.writerow([r["username"], r["timestamp"], r["type"], r["amount"], r["currency"]])
+        writer.writerow([r["username"], r["currency"], r["amount"]])
+
+    csv_data = output.getvalue()
+    output.close()
 
     return Response(
-        out.getvalue(),
+        csv_data,
         mimetype="text/csv",
-        headers={"Content-Disposition": "attachment; filename=transactions.csv"}
+        headers={
+            "Content-Disposition": "attachment; filename=balances.csv",
+        },
     )
 
-@app.route('/admin/export/balances.csv')
-def export_balances_csv():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    if not session.get('is_admin') and session.get('username') != (os.getenv('ADMIN_USERNAME') or ''):
-        flash("غير مصرح.", "error")
-        return redirect(url_for('index'))
 
-    import csv, io
-    username_f = (request.args.get('username') or '').strip()
+@app.route("/admin/withdrawals", methods=["GET", "POST"])
+def admin_withdrawals():
+    admin = _ensure_admin()
+    if not admin:
+        flash("🚫 غير مسموح بالدخول إلى لوحة الإدارة", "error")
+        return redirect(url_for("index"))
 
-    with get_db() as db:
-        if username_f:
-            rows = db.execute(
-                "SELECT username, currency, amount FROM balances WHERE username=? ORDER BY username, currency",
-                (username_f,)
-            ).fetchall()
-        else:
-            rows = db.execute(
-                "SELECT username, currency, amount FROM balances ORDER BY username, currency"
-            ).fetchall()
+    db = get_db()
 
-    out = io.StringIO()
-    w = csv.writer(out)
-    w.writerow(["username", "currency", "amount"])
-    for r in rows:
-        w.writerow([r["username"], r["currency"], r["amount"]])
+    if request.method == "POST":
+        wid = request.form.get("withdrawal_id")
+        action = request.form.get("action")  # approve / reject
+        if not wid or action not in ("approve", "reject"):
+            flash("طلب غير صالح", "error")
+            return redirect(url_for("admin_withdrawals"))
 
-    return Response(
-        out.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": "attachment; filename=balances.csv"}
+        w = db.execute(
+            """
+            SELECT w.*, u.username
+            FROM pending_withdrawals w
+            JOIN users u ON w.user_id = u.id
+            WHERE w.id = ?
+            """,
+            (wid,),
+        ).fetchone()
+
+        if not w:
+            flash("لم يتم العثور على طلب السحب", "error")
+            return redirect(url_for("admin_withdrawals"))
+
+        if action == "approve":
+            db.execute(
+                "UPDATE pending_withdrawals SET status = ? WHERE id = ?",
+                ("approved", wid),
+            )
+            db.commit()
+
+            create_notification(
+                user_id=w["user_id"],
+                kind="withdrawal",
+                ref_id=w["id"],
+                title="✅ تم تنفيذ طلب السحب",
+                body=f"تم تنفيذ طلب السحب رقم {w['id']} بمبلغ {w['amount']} {w['currency']}. يرجى التحقق من جهة الاستلام.",
+            )
+
+            flash("✅ تم تأكيد السحب", "success")
+
+        elif action == "reject":
+            # إعادة المبلغ لرصيد المستخدم
+            change_balance(w["user_id"], w["currency"], float(w["amount"]))
+            db.execute(
+                "UPDATE pending_withdrawals SET status = ? WHERE id = ?",
+                ("rejected", wid),
+            )
+            db.commit()
+
+            create_notification(
+                user_id=w["user_id"],
+                kind="withdrawal",
+                ref_id=w["id"],
+                title="❌ تم رفض طلب السحب",
+                body=f"تم رفض طلب السحب رقم {w['id']}. يرجى التواصل مع الدعم لمزيد من التفاصيل.",
+            )
+
+            flash("❌ تم رفض طلب السحب وإرجاع الرصيد", "success")
+
+        return redirect(url_for("admin_withdrawals"))
+
+    withdrawals = db.execute(
+        """
+        SELECT w.*, u.username, u.email
+        FROM pending_withdrawals w
+        JOIN users u ON w.user_id = u.id
+        WHERE w.status = 'pending'
+        ORDER BY w.timestamp ASC
+        """
+    ).fetchall()
+
+    return render_template("admin_withdrawals.html", withdrawals=withdrawals)
+
+
+@app.route("/admin/deposits", methods=["GET", "POST"])
+def admin_deposits():
+    admin = _ensure_admin()
+    if not admin:
+        flash("🚫 غير مسموح بالدخول إلى لوحة الإدارة", "error")
+        return redirect(url_for("index"))
+
+    db = get_db()
+
+    if request.method == "POST":
+        did = request.form.get("deposit_id")
+        action = request.form.get("action")  # approve / reject
+        if not did or action not in ("approve", "reject"):
+            flash("طلب غير صالح", "error")
+            return redirect(url_for("admin_deposits"))
+
+        d = db.execute(
+            """
+            SELECT d.*, u.username
+            FROM pending_deposits d
+            JOIN users u ON d.user_id = u.id
+            WHERE d.id = ?
+            """,
+            (did,),
+        ).fetchone()
+
+        if not d:
+            flash("لم يتم العثور على طلب الشحن", "error")
+            return redirect(url_for("admin_deposits"))
+
+        if action == "approve":
+            # إضافة الرصيد
+            change_balance(d["user_id"], d["fiat_currency"], float(d["amount"]))
+            db.execute(
+                "UPDATE pending_deposits SET status = ? WHERE id = ?",
+                ("approved", did),
+            )
+            db.commit()
+
+            log_transaction(
+                d["user_id"],
+                "Deposit Approved",
+                d["amount"],
+                d["fiat_currency"],
+                details=f"Binance Pay txid={d['txid']}",
+            )
+
+            create_notification(
+                user_id=d["user_id"],
+                kind="deposit",
+                ref_id=d["id"],
+                title="✅ تم قبول الشحن",
+                body=f"تم قبول طلب الشحن رقم {d['id']} بمبلغ {d['amount']} {d['fiat_currency']}. تم إضافة الرصيد إلى حسابك.",
+            )
+
+            flash("✅ تم اعتماد الشحن وإضافة الرصيد", "success")
+
+        elif action == "reject":
+            db.execute(
+                "UPDATE pending_deposits SET status = ? WHERE id = ?",
+                ("rejected", did),
+            )
+            db.commit()
+
+            create_notification(
+                user_id=d["user_id"],
+                kind="deposit",
+                ref_id=d["id"],
+                title="❌ تم رفض الشحن",
+                body=f"تم رفض طلب الشحن رقم {d['id']}. يرجى التواصل مع الدعم لمزيد من التفاصيل.",
+            )
+
+            flash("❌ تم رفض طلب الشحن", "success")
+
+        return redirect(url_for("admin_deposits"))
+
+    deposits = db.execute(
+        """
+        SELECT d.*, u.username, u.email
+        FROM pending_deposits d
+        JOIN users u ON d.user_id = u.id
+        WHERE d.status = 'pending'
+        ORDER BY d.timestamp ASC
+        """
+    ).fetchall()
+
+    return render_template("admin_deposits.html", deposits=deposits)
+
+
+# ==============================
+# صفحة الإشعارات للمستخدم
+# ==============================
+@app.route("/notifications")
+def notifications():
+    if "username" not in session:
+        return redirect(url_for("login"))
+
+    user = get_user(session["username"])
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT id, kind, ref_id, title, body, status, created_at
+        FROM notifications
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        """,
+        (user["id"],),
+    ).fetchall()
+
+    # نحدد جميع الإشعارات كـ read عند فتح الصفحة
+    db.execute(
+        "UPDATE notifications SET status = 'read' WHERE user_id = ? AND status = 'unread'",
+        (user["id"],),
     )
-# ======= نهاية الإضافة =======
+    db.commit()
 
-@app.route('/about')
+    return render_template("notifications.html", notifications=rows)
+
+
+# ==============================
+# صفحات إضافية
+# ==============================
+@app.route("/transactions")
+def recent_transactions():
+    if "username" not in session:
+        return redirect(url_for("login"))
+
+    user = get_user(session["username"])
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    return render_template("transactions.html", transactions=user["transactions"])
+
+
+@app.route("/toggle_language")
+def toggle_language():
+    current_lang = session.get("lang", "ar")
+    session["lang"] = "en" if current_lang == "ar" else "ar"
+    return redirect(request.referrer or url_for("index"))
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/about")
 def about():
-    return "Currency Converter — Flask + SQLite (Binance Pay only)"
+    return render_template("about.html")
 
-@app.get('/health')
-def health():
-    return 'ok', 200
 
-# تشغيل
-init_db()
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+@app.route("/support")
+def support():
+    return render_template("support.html")
+
+# إنشاء حساب أدمن تلقائي عند التشغيل الأول (Render)
+def ensure_admin():
+    db = sqlite3.connect(DB_PATH)
+    cur = db.cursor()
+    cur.execute("SELECT id FROM users WHERE username='admin'")
+    if not cur.fetchone():
+        from werkzeug.security import generate_password_hash
+        cur.execute("""
+            INSERT INTO users (username, email, phone, password_hash, is_admin)
+            VALUES ('admin', 'admin@example.com', '', ?, 1)
+        """, (generate_password_hash("admin123"),))
+        db.commit()
+        print("✅ Admin account created on Render (admin / admin123)")
+    else:
+        print("ℹ️ Admin account already exists.")
+    db.close()
+
+ensure_admin()
+
+# ==============================
+# تشغيل التطبيق
+# ==============================
+if __name__ == "__main__":
+    app.run(debug=True)

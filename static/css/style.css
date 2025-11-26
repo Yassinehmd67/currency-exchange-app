@@ -1,0 +1,25 @@
+/* استيراد أعلام الدول (flag icons) */
+@import url('https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/6.7.0/css/flag-icons.min.css');
+
+body {
+  font-family: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: #f4f6f8;
+  margin: 0;
+  padding: 0;
+}
+
+.flash {
+  text-align: center;
+  margin-bottom: 10px;
+  font-weight: bold;
+}
+
+.flash.error {
+  color: #e74c3c;
+}
+
+.flash.success {
+  color: #27ae60;
+}
+
+/* يمكنك إضافة أي تنسيقات عامة أخرى هنا لتستخدمها في الصفحات المختلفة */

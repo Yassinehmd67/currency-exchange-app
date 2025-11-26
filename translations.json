@@ -62,7 +62,66 @@
     "username": "اسم المستخدم",
     "password": "كلمة المرور",
     "no_account": "ليس لديك حساب؟",
-    "have_account": "لديك حساب؟"
+    "have_account": "لديك حساب؟",
+
+    "dashboard": "لوحة الإحصائيات",
+    "dashboard_hint": "نظرة عامة على معاملاتك وأرصدة حسابك.",
+    "tx_last_14_days": "قيمة المعاملات (آخر 14 يوم)",
+    "tx_30d_by_currency": "المعاملات حسب العملة (آخر 30 يوم)",
+    "balances_now": "أرصدة الحساب الحالية",
+    "no_data": "لا توجد بيانات",
+
+    "notifications": "الإشعارات",
+    "notifications_hint": "تظهر هنا التنبيهات الحية عند الإيداع أو التحويل أو السحب.",
+    "show_more": "إظهار المزيد",
+
+    "country": "الدولة",
+    "bank_info": "المعلومات البنكية",
+    "bank_info_placeholder": "اكتب اسمك كما في البنك + اسم البنك + RIB/IBAN + أي تفاصيل لازمة لاستلام الحوالة",
+    "bank_info_hint_title": "أمثلة حسب الدولة",
+    "bank_info_hint_ma": "مثال المغرب:\nالاسم: محمد بن فلان\nالبنك: بريد بنك\nRIB: 310810000001234567890123",
+    "bank_info_hint_sa": "مثال السعودية:\nName: Abdullah Al-Fulan\nBank: Al Ahli\nIBAN: SA03 8000 0123 4567 8901 2345",
+    "bank_info_hint_eg": "مثال مصر:\nالاسم: أحمد محمد\nالبنك: بنك مصر\nرقم الحساب: 12345678901234",
+    "bank_info_invalid": "❌ معلومات بنكية غير كافية. يرجى إدخال التفاصيل كما تستعملها في بنكك.",
+    "bank_info_warn_enrich": "ℹ️ يُفضّل تضمين IBAN/RIB/اسم البنك لتسريع المعالجة.",
+    "bank_info_too_long": "❌ معلومات بنكية طويلة بشكل غير طبيعي.",
+
+    "payout_ref": "مرجع التحويل",
+    "payout_ref_placeholder": "رقم الحوالة/اسم الوكيل/TxID… (اختياري)",
+    "processed_by": "تمت المعالجة بواسطة",
+    "processed_at": "وقت المعالجة",
+
+    "about_app": "معلومات حول التطبيق",
+    "about_app_points": [
+      "عمولة السحب هي 1% من المبلغ المراد سحبه، أما التحويل فهو بدون أي عمولة.",
+      "هذا التطبيق يوفر للمستخدم الحصول على عملات دولية أخرى بطريقة سهلة ومتاحة.",
+      "قسم الإشعارات هو المكان الذي سيتلقى فيه المستخدم المطالب أو الحلول.",
+      "الشحن سيكون ب USDT/BTC عبر باينانس أوتوماتيكياً بعد اختيار المبلغ ونجاح العملية.",
+      "أقل مبلغ للسحب هو 30 دولار أو ما يعادلها، وأقصى مبلغ 5000 دولار.",
+      "مدة وصول السحب تتراوح بين 20 دقيقة و 12 ساعة حسب كثافة السحوبات.",
+      "التطبيق يوفّر أرصدة بعملات محلية لتجربة أفضل وتجنب الاقتطاعات.",
+      "يمكن الاطلاع على جميع معاملاتك وتحركاتك المالية.",
+      "المعلومات البنكية ضرورية لإرسال الحوالة بشكل صحيح.",
+      "لأي مشكلة أو استفسار يرجى التواصل عبر بوابة الدعم."
+    ],
+
+    "tx_withdraw": "📤 طلب سحب",
+    "tx_convert": "🔁 تحويل رصيد",
+    "tx_deposit_binance": "💳 إيداع Binance Pay",
+
+    "support": "الدعم",
+    "support_center": "مركز الدعم",
+    "open_ticket": "فتح تذكرة",
+    "my_tickets": "تذاكري",
+    "contact_support": "التواصل مع الدعم",
+    "support_description": "مرحباً بك في قسم الدعم، يمكنك هنا إرسال استفساراتك أو مشاكل متعلقة بالخدمة.",
+    "contact_via": "التواصل عبر",
+    "whatsapp": "واتساب",
+    "telegram": "تيليجرام",
+
+    "notif_withdraw_pending": "📤 تم إرسال طلب سحب {amount} {currency}، بانتظار المعالجة.",
+    "notif_withdraw_success": "✅ تم اعتماد سحب {amount} {currency} بنجاح.",
+    "notif_withdraw_failed": "❌ تم رفض سحب {amount} {currency}."
   },
   "en": {
     "home": "Home",
@@ -127,6 +186,65 @@
     "username": "Username",
     "password": "Password",
     "no_account": "Don't have an account?",
-    "have_account": "Already have an account?"
+    "have_account": "Already have an account?",
+
+    "dashboard": "Dashboard",
+    "dashboard_hint": "Overview of your transactions and balances.",
+    "tx_last_14_days": "Transaction Value (Last 14 Days)",
+    "tx_30d_by_currency": "Transactions by Currency (Last 30 Days)",
+    "balances_now": "Current Balances",
+    "no_data": "No data",
+
+    "notifications": "Notifications",
+    "notifications_hint": "Live alerts will appear here for deposits, conversions, and withdrawals.",
+    "show_more": "Show more",
+
+    "country": "Country",
+    "bank_info": "Bank information",
+    "bank_info_placeholder": "Enter your bank name + account holder name + RIB/IBAN + any details required to receive",
+    "bank_info_hint_title": "Examples by country",
+    "bank_info_hint_ma": "Morocco example:\nName: Mohamed Ben Fulan\nBank: Al Barid Bank\nRIB: 310810000001234567890123",
+    "bank_info_hint_sa": "Saudi example:\nName: Abdullah Al-Fulan\nBank: Al Ahli\nIBAN: SA03 8000 0123 4567 8901 2345",
+    "bank_info_hint_eg": "Egypt example:\nName: Ahmed Mohamed\nBank: Banque Misr\nAccount No.: 12345678901234",
+    "bank_info_invalid": "❌ Insufficient bank info. Please enter details exactly as used at your bank.",
+    "bank_info_warn_enrich": "ℹ️ Please include IBAN/RIB/bank name to speed up processing.",
+    "bank_info_too_long": "❌ Bank info appears excessively long.",
+
+    "payout_ref": "Payout reference",
+    "payout_ref_placeholder": "Bank transfer ref / agent name / TxID… (optional)",
+    "processed_by": "Processed by",
+    "processed_at": "Processed at",
+
+    "about_app": "About the Application",
+    "about_app_points": [
+      "Withdrawal fee is 1% of the amount requested, while currency conversion is free of charge.",
+      "This application helps users obtain international currencies easily and conveniently.",
+      "The notifications section is where users receive important updates or solutions.",
+      "Top-up is done with USDT/BTC via Binance automatically after amount selection and success.",
+      "Minimum withdrawal is $30 or equivalent, maximum is $5000.",
+      "Withdrawal processing time ranges between 20 minutes and 12 hours depending on load.",
+      "The app provides balances in local currencies to avoid high fees and ensure a better experience.",
+      "You can track all your transactions and financial activities.",
+      "Bank information is required to send your transfer correctly.",
+      "For any issues or inquiries, please contact us through the support portal."
+    ],
+
+    "tx_withdraw": "📤 Withdraw request",
+    "tx_convert": "🔁 Balance conversion",
+    "tx_deposit_binance": "💳 Binance Pay deposit",
+
+    "support": "Support",
+    "support_center": "Support Center",
+    "open_ticket": "Open Ticket",
+    "my_tickets": "My Tickets",
+    "contact_support": "Contact Support",
+    "support_description": "Welcome to the support section. Here you can submit inquiries or issues related to the service.",
+    "contact_via": "Contact via",
+    "whatsapp": "WhatsApp",
+    "telegram": "Telegram",
+
+    "notif_withdraw_pending": "📤 Withdrawal request of {amount} {currency} has been submitted and is pending review.",
+    "notif_withdraw_success": "✅ Withdrawal of {amount} {currency} approved successfully.",
+    "notif_withdraw_failed": "❌ Withdrawal of {amount} {currency} has been rejected."
   }
 }
