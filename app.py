@@ -35,7 +35,12 @@ EXCHANGE_API_KEY = os.getenv("EXCHANGE_API_KEY")
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme")
 DB_PATH = os.getenv("DB_PATH", "data.db")
 BINANCE_UID = os.getenv("BINANCE_UID", "YOUR_BINANCE_UID_HERE")
-BINANCE_AUTO_100_URL = os.getenv("BINANCE_AUTO_100_URL")
+
+# رابط الشحن الأوتوماتيكي 100 USDT
+BINANCE_AUTO_100_URL = os.getenv("BINANCE_AUTO_100_URL", "").strip()
+if not BINANCE_AUTO_100_URL:
+    # fallback ثابت لو ما كانش موجود في .env
+    BINANCE_AUTO_100_URL = "https://s.binance.com/nLrZHHvJ"
 
 # ==============================
 # إنشاء التطبيق
@@ -121,9 +126,11 @@ def close_db(exc):
 
 
 def init_db():
-    """إنشاء الجداول إذا لم تكن موجودة."""
     db = sqlite3.connect(DB_PATH)
-    db.executescript(
+    db.row_factory = sqlite3.Row
+    cur = db.cursor()
+
+    cur.executescript(
         """
         PRAGMA foreign_keys = ON;
 
@@ -183,21 +190,109 @@ def init_db():
         CREATE TABLE IF NOT EXISTS notifications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            kind TEXT NOT NULL,
-            ref_id INTEGER,
+            kind TEXT,
             title TEXT,
-            body TEXT,
-            status TEXT DEFAULT 'unread',
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            message TEXT,
+            status TEXT,
+            ref_type TEXT,
+            ref_id INTEGER,
+            is_read INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
         """
     )
+
+    # ✅ ترقية جدول notifications لو كان قديماً بدون بعض الأعمدة
+    try:
+        cols = cur.execute("PRAGMA table_info(notifications)").fetchall()
+        colnames = {c["name"] for c in cols}
+
+        if "kind" not in colnames:
+            cur.execute("ALTER TABLE notifications ADD COLUMN kind TEXT")
+
+        if "status" not in colnames:
+            cur.execute("ALTER TABLE notifications ADD COLUMN status TEXT")
+
+        if "ref_type" not in colnames:
+            cur.execute("ALTER TABLE notifications ADD COLUMN ref_type TEXT")
+
+        if "ref_id" not in colnames:
+            cur.execute("ALTER TABLE notifications ADD COLUMN ref_id INTEGER")
+
+        if "is_read" not in colnames:
+            cur.execute("ALTER TABLE notifications ADD COLUMN is_read INTEGER DEFAULT 0")
+    except Exception as e:
+        logging.warning("ALTER TABLE on notifications failed: %s", e)
+
+    db.commit()
     db.close()
-
-
+        
 # استدعاء الإنشاء مرة واحدة عند تحميل الملف
 init_db()
+
+def ensure_default_admin():
+    """
+    إنشاء حساب أدمن افتراضي مرة واحدة فقط:
+    - username: admin
+    - password: Admin123!  (غيّره بعد أول دخول)
+    - balance: 1000 USD
+    """
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    cur = db.cursor()
+
+    cur.execute("SELECT id FROM users WHERE username = ?", ("admin",))
+    row = cur.fetchone()
+    if row:
+        db.close()
+        return  # الأدمن موجود مسبقًا، لا نفعل شيئًا
+
+    from werkzeug.security import generate_password_hash
+    password_hash = generate_password_hash("Admin123!")
+
+    # إنشاء المستخدم كأدمن
+    cur.execute(
+        """
+        INSERT INTO users (username, email, phone, password_hash, is_admin)
+        VALUES (?, ?, ?, ?, 1)
+        """,
+        ("admin", "admin@example.com", "", password_hash),
+    )
+    admin_id = cur.lastrowid
+
+    # إنشاء أرصدة 0 لكل العملات
+    for c in CURRENCIES:
+        cur.execute(
+            "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, ?)",
+            (admin_id, c, 0.0),
+        )
+
+    # شحن 1000 USD
+    cur.execute(
+        "UPDATE balances SET amount = amount + ? WHERE user_id = ? AND currency = ?",
+        (1000.0, admin_id, "USD"),
+    )
+
+    # تسجيل العملية في سجلّ المعاملات
+    cur.execute(
+        """
+        INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            admin_id,
+            "Initial Admin Balance",
+            1000.0,
+            "USD",
+            "Initial admin credit",
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+
+    db.commit()
+    db.close()
+    print("✅ Default admin created with 1000 USD.")
 
 # ==============================
 # دوال مساعدة على مستوى المستخدمين
@@ -698,7 +793,7 @@ def withdraw_request():
 
 
 # ==============================
-# لوحة تحكم الأدمن + التصدير
+# أدوات مساعدة للأدمن
 # ==============================
 def _ensure_admin():
     """تفقد أن المستخدم أدمن وإلا يرجع None."""
@@ -708,116 +803,6 @@ def _ensure_admin():
     if not user or not user["is_admin"]:
         return None
     return user
-
-
-@app.route("/admin/overview")
-def admin_overview():
-    admin = _ensure_admin()
-    if not admin:
-        flash("🚫 غير مسموح بالدخول إلى لوحة الإدارة", "error")
-        return redirect(url_for("index"))
-
-    db = get_db()
-
-    # فلاتر البحث
-    username_f = (request.args.get("username") or "").strip() or None
-    currency_f = (request.args.get("currency") or "").strip().upper() or None
-    start_date = request.args.get("start_date") or None
-    end_date = request.args.get("end_date") or None
-    page = request.args.get("page", 1, type=int)
-    per_page = 30
-
-    # إجمالي الأرصدة حسب العملة
-    totals = db.execute(
-        "SELECT currency, SUM(amount) AS total FROM balances GROUP BY currency"
-    ).fetchall()
-
-    # قائمة المستخدمين
-    users = db.execute(
-        "SELECT username, is_admin FROM users ORDER BY id DESC"
-    ).fetchall()
-
-    # الأرصدة لكل مستخدم/عملة
-    balances = db.execute(
-        """
-        SELECT u.username, b.currency, b.amount
-        FROM balances b
-        JOIN users u ON b.user_id = u.id
-        ORDER BY u.username, b.currency
-        """
-    ).fetchall()
-
-    # بناء جملة WHERE للمعاملات
-    conditions = []
-    params = []
-
-    if username_f:
-        conditions.append("u.username = ?")
-        params.append(username_f)
-    if currency_f:
-        conditions.append("t.currency = ?")
-        params.append(currency_f)
-    if start_date:
-        conditions.append("date(t.timestamp) >= date(?)")
-        params.append(start_date)
-    if end_date:
-        conditions.append("date(t.timestamp) <= date(?)")
-        params.append(end_date)
-
-    where_clause = ""
-    if conditions:
-        where_clause = "WHERE " + " AND ".join(conditions)
-
-    # عدد السجلات
-    count_row = db.execute(
-        f"""
-        SELECT COUNT(*) AS c
-        FROM transactions t
-        JOIN users u ON t.user_id = u.id
-        {where_clause}
-        """,
-        params,
-    ).fetchone()
-    total_records = count_row["c"] if count_row else 0
-    total_pages = max((total_records + per_page - 1) // per_page, 1)
-    if page < 1:
-        page = 1
-    if page > total_pages:
-        page = total_pages
-
-    offset = (page - 1) * per_page
-
-    transactions = db.execute(
-        f"""
-        SELECT t.id, u.username, t.type, t.amount, t.currency, t.timestamp
-        FROM transactions t
-        JOIN users u ON t.user_id = u.id
-        {where_clause}
-        ORDER BY t.timestamp DESC
-        LIMIT ? OFFSET ?
-        """,
-        (*params, per_page, offset),
-    ).fetchall()
-
-    prev_page = page - 1 if page > 1 else None
-    next_page = page + 1 if page < total_pages else None
-
-    return render_template(
-        "admin.html",
-        totals=totals,
-        users=users,
-        balances=balances,
-        transactions=transactions,
-        username_f=username_f or "",
-        currency_f=currency_f or "",
-        start_date=start_date or "",
-        end_date=end_date or "",
-        page=page,
-        total_pages=total_pages,
-        prev_page=prev_page,
-        next_page=next_page,
-    )
-
 
 @app.route("/admin/export/transactions")
 def export_transactions_csv():
@@ -941,77 +926,91 @@ def admin_withdrawals():
 
     db = get_db()
 
+    # ========= POST: موافقة أو رفض =========
     if request.method == "POST":
         wid = request.form.get("withdrawal_id")
-        action = request.form.get("action")  # approve / reject
-        if not wid or action not in ("approve", "reject"):
-            flash("طلب غير صالح", "error")
+        action = request.form.get("action")  # "approve" أو "reject"
+
+        if not wid or not action:
+            flash("⚠️ بيانات الطلب غير كاملة", "error")
             return redirect(url_for("admin_withdrawals"))
 
+        # نجلب الطلب من جدول pending_withdrawals
         w = db.execute(
-            """
-            SELECT w.*, u.username
-            FROM pending_withdrawals w
-            JOIN users u ON w.user_id = u.id
-            WHERE w.id = ?
-            """,
-            (wid,),
+            "SELECT * FROM pending_withdrawals WHERE id = ?", (wid,)
         ).fetchone()
 
         if not w:
-            flash("لم يتم العثور على طلب السحب", "error")
+            flash("⚠️ الطلب غير موجود", "error")
             return redirect(url_for("admin_withdrawals"))
 
-        if action == "approve":
-            db.execute(
-                "UPDATE pending_withdrawals SET status = ? WHERE id = ?",
-                ("approved", wid),
-            )
-            db.commit()
+        if w["status"] != "pending":
+            flash("ℹ️ هذا الطلب تمّت معالجته مسبقاً.", "info")
+            return redirect(url_for("admin_withdrawals"))
 
-            create_notification(
-                user_id=w["user_id"],
-                kind="withdrawal",
-                ref_id=w["id"],
-                title="✅ تم تنفيذ طلب السحب",
-                body=f"تم تنفيذ طلب السحب رقم {w['id']} بمبلغ {w['amount']} {w['currency']}. يرجى التحقق من جهة الاستلام.",
-            )
+        # نحدد الحالة الجديدة
+        new_status = "completed" if action == "approve" else "rejected"
 
-            flash("✅ تم تأكيد السحب", "success")
+        # نحدّث السجل
+        db.execute(
+            """
+            UPDATE pending_withdrawals
+            SET status = ?, processed_by = ?, processed_at = ?
+            WHERE id = ?
+            """,
+            (
+                new_status,
+                admin["username"],
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                wid,
+            ),
+        )
 
-        elif action == "reject":
-            # إعادة المبلغ لرصيد المستخدم
-            change_balance(w["user_id"], w["currency"], float(w["amount"]))
-            db.execute(
-                "UPDATE pending_withdrawals SET status = ? WHERE id = ?",
-                ("rejected", wid),
-            )
-            db.commit()
+        # تجهيز بيانات الإشعار
+        user_id = w["user_id"]
+        amount = w["amount"]
+        currency = w["currency"]
 
-            create_notification(
-                user_id=w["user_id"],
-                kind="withdrawal",
-                ref_id=w["id"],
-                title="❌ تم رفض طلب السحب",
-                body=f"تم رفض طلب السحب رقم {w['id']}. يرجى التواصل مع الدعم لمزيد من التفاصيل.",
-            )
+        if new_status == "completed":
+            title = "تم تنفيذ طلب السحب"
+            body = f"تم تنفيذ طلب السحب بقيمة {amount} {currency} بنجاح."
+            notif_type = "withdraw_approved"
+        else:
+            title = "تم رفض طلب السحب"
+            body = f"تم رفض طلب السحب بقيمة {amount} {currency}. يرجى التواصل مع الدعم عند الحاجة."
+            notif_type = "withdraw_rejected"
 
-            flash("❌ تم رفض طلب السحب وإرجاع الرصيد", "success")
+        # إدخال الإشعار في جدول notifications
+        db.execute(
+            """
+            INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
+            VALUES (?, ?, ?, ?, 0, ?)
+            """,
+            (
+                user_id,
+                title,
+                body,
+                notif_type,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
 
+        db.commit()
+        flash("✅ تم تحديث حالة طلب السحب وإرسال إشعار للمستخدم.", "success")
         return redirect(url_for("admin_withdrawals"))
 
+    # ========= GET: عرض الطلبات المعلقة =========
     withdrawals = db.execute(
         """
         SELECT w.*, u.username, u.email
         FROM pending_withdrawals w
         JOIN users u ON w.user_id = u.id
         WHERE w.status = 'pending'
-        ORDER BY w.timestamp ASC
+        ORDER BY w.timestamp DESC
         """
     ).fetchall()
 
     return render_template("admin_withdrawals.html", withdrawals=withdrawals)
-
 
 @app.route("/admin/deposits", methods=["GET", "POST"])
 def admin_deposits():
