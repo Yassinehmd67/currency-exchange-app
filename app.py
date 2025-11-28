@@ -1092,85 +1092,108 @@ def admin_deposits():
 
     db = get_db()
 
+    # ========= POST: موافقة أو رفض شحن =========
     if request.method == "POST":
         did = request.form.get("deposit_id")
-        action = request.form.get("action")  # approve / reject
-        if not did or action not in ("approve", "reject"):
-            flash("طلب غير صالح", "error")
+        action = request.form.get("action")  # "approve" أو "reject"
+
+        if not did or not action:
+            flash("⚠️ بيانات الطلب غير كاملة", "error")
             return redirect(url_for("admin_deposits"))
 
-        d = db.execute(
-            """
-            SELECT d.*, u.username
-            FROM pending_deposits d
-            JOIN users u ON d.user_id = u.id
-            WHERE d.id = ?
-            """,
-            (did,),
+        dep = db.execute(
+            "SELECT * FROM pending_deposits WHERE id = ?", (did,)
         ).fetchone()
 
-        if not d:
-            flash("لم يتم العثور على طلب الشحن", "error")
+        if not dep:
+            flash("⚠️ الطلب غير موجود", "error")
             return redirect(url_for("admin_deposits"))
 
-        if action == "approve":
-            # إضافة الرصيد
-            change_balance(d["user_id"], d["fiat_currency"], float(d["amount"]))
-            db.execute(
-                "UPDATE pending_deposits SET status = ? WHERE id = ?",
-                ("approved", did),
-            )
-            db.commit()
+        if dep["status"] != "pending":
+            flash("ℹ️ هذا الطلب تمّت معالجته مسبقاً.", "info")
+            return redirect(url_for("admin_deposits"))
 
+        new_status = "completed" if action == "approve" else "rejected"
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        user_id = dep["user_id"]
+        amount = float(dep["amount"])
+        fiat_currency = dep["fiat_currency"]
+
+        # لو تم القبول: نضيف الرصيد ونُسجّل معاملة
+        if new_status == "completed":
+            change_balance(user_id, fiat_currency, amount)
             log_transaction(
-                d["user_id"],
-                "Deposit Approved",
-                d["amount"],
-                d["fiat_currency"],
-                details=f"Binance Pay txid={d['txid']}",
+                user_id,
+                "Binance Topup",
+                amount,
+                fiat_currency,
+                details=f"Approved topup #{dep['id']} via Binance Pay",
             )
-
-            create_notification(
-                user_id=d["user_id"],
-                kind="deposit",
-                ref_id=d["id"],
-                title="✅ تم قبول الشحن",
-                body=f"تم قبول طلب الشحن رقم {d['id']} بمبلغ {d['amount']} {d['fiat_currency']}. تم إضافة الرصيد إلى حسابك.",
+            title = "تم قبول طلب الشحن"
+            body = f"تم شحن حسابك بمبلغ {amount} {fiat_currency} بنجاح."
+            notif_type = "deposit_approved"
+        else:
+            title = "تم رفض طلب الشحن"
+            body = (
+                f"تم رفض طلب شحن بقيمة {amount} {fiat_currency}. "
+                "يرجى التأكد من التحويل أو التواصل مع الدعم."
             )
+            notif_type = "deposit_rejected"
 
-            flash("✅ تم اعتماد الشحن وإضافة الرصيد", "success")
-
-        elif action == "reject":
+        # تحديث سجل الشحن مع دعم سكيمة قديمة (بدون processed_by / processed_at)
+        try:
+            db.execute(
+                """
+                UPDATE pending_deposits
+                SET status = ?, processed_by = ?, processed_at = ?
+                WHERE id = ?
+                """,
+                (new_status, admin["username"], now_str, did),
+            )
+        except sqlite3.OperationalError:
+            # قاعدة بيانات قديمة لا تحتوي الأعمدة الجديدة
             db.execute(
                 "UPDATE pending_deposits SET status = ? WHERE id = ?",
-                ("rejected", did),
-            )
-            db.commit()
-
-            create_notification(
-                user_id=d["user_id"],
-                kind="deposit",
-                ref_id=d["id"],
-                title="❌ تم رفض الشحن",
-                body=f"تم رفض طلب الشحن رقم {d['id']}. يرجى التواصل مع الدعم لمزيد من التفاصيل.",
+                (new_status, did),
             )
 
-            flash("❌ تم رفض طلب الشحن", "success")
+        # إدخال إشعار مع دعم سكيمة قديمة (بدون ref_table / ref_id)
+        try:
+            db.execute(
+                """
+                INSERT INTO notifications
+                    (user_id, title, body, type, is_read, created_at, ref_table, ref_id)
+                VALUES (?, ?, ?, ?, 0, ?, 'pending_deposits', ?)
+                """,
+                (user_id, title, body, notif_type, now_str, dep["id"]),
+            )
+        except sqlite3.OperationalError:
+            db.execute(
+                """
+                INSERT INTO notifications
+                    (user_id, title, body, type, is_read, created_at)
+                VALUES (?, ?, ?, ?, 0, ?)
+                """,
+                (user_id, title, body, notif_type, now_str),
+            )
 
+        db.commit()
+        flash("✅ تم تحديث حالة طلب الشحن.", "success")
         return redirect(url_for("admin_deposits"))
 
+    # ========= GET: عرض الطلبات المعلقة =========
     deposits = db.execute(
         """
         SELECT d.*, u.username, u.email
         FROM pending_deposits d
         JOIN users u ON d.user_id = u.id
         WHERE d.status = 'pending'
-        ORDER BY d.timestamp ASC
+        ORDER BY d.timestamp DESC
         """
     ).fetchall()
 
     return render_template("admin_deposits.html", deposits=deposits)
-
 
 # ==============================
 # صفحة الإشعارات للمستخدم
