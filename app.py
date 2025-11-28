@@ -696,6 +696,7 @@ def binance_deposit_proof():
     currency = request.form.get("currency")
     txid = (request.form.get("txid") or "").strip()
 
+    # التحقق من المدخلات
     try:
         amount = Decimal(str(amount_raw))
     except InvalidOperation:
@@ -713,6 +714,29 @@ def binance_deposit_proof():
         flash("خطأ في بيانات المستخدم", "error")
         return redirect(url_for("login"))
 
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    db = get_db()
+
+    # ✅ إضافة طلب الشحن إلى جدول pending_deposits ليظهر في لوحة الأدمن
+    db.execute(
+        """
+        INSERT INTO pending_deposits
+        (user_id, amount, fiat_currency, pay_method, status, txid, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user["id"],
+            float(amount),
+            currency,          # تخزين العملة في حقل fiat_currency
+            "Binance Pay",     # طريقة الدفع
+            "pending",         # حالة الطلب المبدئية
+            txid,
+            now_str,
+        ),
+    )
+
+    # تسجيل العملية في سجل المعاملات (اختياري لكنه مفيد للتتبع)
     log_transaction(
         user["id"],
         "Binance Deposit Proof",
@@ -721,9 +745,10 @@ def binance_deposit_proof():
         details=f"TXID/Proof: {txid}",
     )
 
-    flash("✅ تم إرسال إثبات الشحن، سيتم مراجعة الطلب يدويًا.", "success")
-    return redirect(url_for("index"))
+    db.commit()
 
+    flash("✅ تم إرسال إثبات الشحن، سيقوم الأدمن بمراجعته وإضافة الرصيد بعد التحقق.", "success")
+    return redirect(url_for("index"))
 
 @app.route("/withdraw_request", methods=["POST"])
 def withdraw_request():
@@ -948,55 +973,101 @@ def admin_withdrawals():
             flash("ℹ️ هذا الطلب تمّت معالجته مسبقاً.", "info")
             return redirect(url_for("admin_withdrawals"))
 
-        # نحدد الحالة الجديدة
-        new_status = "completed" if action == "approve" else "rejected"
-
-        # نحدّث السجل
-        db.execute(
-            """
-            UPDATE pending_withdrawals
-            SET status = ?, processed_by = ?, processed_at = ?
-            WHERE id = ?
-            """,
-            (
-                new_status,
-                admin["username"],
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                wid,
-            ),
-        )
-
-        # تجهيز بيانات الإشعار
         user_id = w["user_id"]
-        amount = w["amount"]
+        amount = float(w["amount"])
         currency = w["currency"]
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        if new_status == "completed":
-            title = "تم تنفيذ طلب السحب"
-            body = f"تم تنفيذ طلب السحب بقيمة {amount} {currency} بنجاح."
-            notif_type = "withdraw_approved"
-        else:
-            title = "تم رفض طلب السحب"
-            body = f"تم رفض طلب السحب بقيمة {amount} {currency}. يرجى التواصل مع الدعم عند الحاجة."
-            notif_type = "withdraw_rejected"
+        # ========== حالة الموافقة ==========
+        if action == "approve":
+            # تحديث حالة الطلب
+            db.execute(
+                """
+                UPDATE pending_withdrawals
+                SET status = 'completed',
+                    processed_by = ?,
+                    processed_at = ?
+                WHERE id = ?
+                """,
+                (admin["username"], now_str, wid),
+            )
 
-        # إدخال الإشعار في جدول notifications
-        db.execute(
-            """
-            INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
-            VALUES (?, ?, ?, ?, 0, ?)
-            """,
-            (
+            # تسجيل معاملة
+            log_transaction(
                 user_id,
-                title,
-                body,
-                notif_type,
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            ),
-        )
+                "Withdrawal Approved",
+                amount,
+                currency,
+                f"تم تنفيذ طلب السحب بقيمة {amount} {currency}",
+            )
 
-        db.commit()
-        flash("✅ تم تحديث حالة طلب السحب وإرسال إشعار للمستخدم.", "success")
+            # إشعار للمستخدم
+            db.execute(
+                """
+                INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
+                VALUES (?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    user_id,
+                    "تم تنفيذ طلب السحب",
+                    f"تم تنفيذ طلب السحب بقيمة {amount} {currency} بنجاح.",
+                    "withdraw_approved",
+                    now_str,
+                ),
+            )
+
+            db.commit()
+            flash("✅ تم اعتماد طلب السحب وإرسال إشعار للمستخدم.", "success")
+            return redirect(url_for("admin_withdrawals"))
+
+        # ========== حالة الرفض ==========
+        if action == "reject":
+            # إرجاع المبلغ إلى رصيد المستخدم
+            change_balance(user_id, currency, amount)
+
+            # تحديث حالة الطلب
+            db.execute(
+                """
+                UPDATE pending_withdrawals
+                SET status = 'rejected',
+                    processed_by = ?,
+                    processed_at = ?
+                WHERE id = ?
+                """,
+                (admin["username"], now_str, wid),
+            )
+
+            # تسجيل معاملة
+            log_transaction(
+                user_id,
+                "Withdrawal Rejected",
+                amount,
+                currency,
+                "تم رفض طلب السحب وإرجاع المبلغ إلى الرصيد.",
+            )
+
+            # إشعار للمستخدم
+            db.execute(
+                """
+                INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
+                VALUES (?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    user_id,
+                    "تم رفض طلب السحب",
+                    f"تم رفض طلب السحب بقيمة {amount} {currency} "
+                    f"وتم إرجاع المبلغ إلى رصيد حسابك.",
+                    "withdraw_rejected",
+                    now_str,
+                ),
+            )
+
+            db.commit()
+            flash("✅ تم رفض طلب السحب وإرجاع المبلغ للمستخدم.", "success")
+            return redirect(url_for("admin_withdrawals"))
+
+        # لو action ليست approve أو reject
+        flash("⚠️ إجراء غير معروف", "error")
         return redirect(url_for("admin_withdrawals"))
 
     # ========= GET: عرض الطلبات المعلقة =========
