@@ -117,7 +117,6 @@ def get_db():
         g.db.row_factory = sqlite3.Row
     return g.db
 
-
 @app.teardown_appcontext
 def close_db(exc):
     db = g.pop("db", None)
@@ -170,9 +169,11 @@ def init_db():
             amount REAL NOT NULL,
             fiat_currency TEXT NOT NULL,
             pay_method TEXT,
-            status TEXT,
+            status TEXT DEFAULT 'pending',
             txid TEXT,
             timestamp TEXT NOT NULL,
+            processed_by TEXT,
+            processed_at TEXT,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
@@ -182,54 +183,88 @@ def init_db():
             amount REAL NOT NULL,
             currency TEXT NOT NULL,
             payout_info TEXT,
-            status TEXT,
+            status TEXT DEFAULT 'pending',
             timestamp TEXT NOT NULL,
+            processed_by TEXT,
+            processed_at TEXT,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS notifications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            kind TEXT,
-            title TEXT,
-            message TEXT,
-            status TEXT,
-            ref_type TEXT,
-            ref_id INTEGER,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            type TEXT,
             is_read INTEGER DEFAULT 0,
             created_at TEXT NOT NULL,
+            ref_type TEXT,
+            ref_id INTEGER,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
         """
     )
 
-    # ✅ ترقية جدول notifications لو كان قديماً بدون بعض الأعمدة
-    try:
-        cols = cur.execute("PRAGMA table_info(notifications)").fetchall()
-        colnames = {c["name"] for c in cols}
+    # ==== ترقية الجداول لو كانت قديمة (على DB موجودة من قبل) ====
 
-        if "kind" not in colnames:
-            cur.execute("ALTER TABLE notifications ADD COLUMN kind TEXT")
+    # ترقية جدول pending_deposits
+    cols_dep = {
+        c["name"] for c in cur.execute("PRAGMA table_info(pending_deposits)").fetchall()
+    }
+    if "status" not in cols_dep:
+        cur.execute("ALTER TABLE pending_deposits ADD COLUMN status TEXT DEFAULT 'pending'")
+    if "processed_by" not in cols_dep:
+        cur.execute("ALTER TABLE pending_deposits ADD COLUMN processed_by TEXT")
+    if "processed_at" not in cols_dep:
+        cur.execute("ALTER TABLE pending_deposits ADD COLUMN processed_at TEXT")
 
-        if "status" not in colnames:
-            cur.execute("ALTER TABLE notifications ADD COLUMN status TEXT")
+    # ترقية جدول pending_withdrawals
+    cols_w = {
+        c["name"] for c in cur.execute("PRAGMA table_info(pending_withdrawals)").fetchall()
+    }
+    if "status" not in cols_w:
+        cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN status TEXT DEFAULT 'pending'")
+    if "processed_by" not in cols_w:
+        cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_by TEXT")
+    if "processed_at" not in cols_w:
+        cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_at TEXT")
 
-        if "ref_type" not in colnames:
-            cur.execute("ALTER TABLE notifications ADD COLUMN ref_type TEXT")
+    # ترقية جدول notifications (لو كانت نسخة قديمة فيها message/kind/status فقط)
+    cols_not = {
+        c["name"] for c in cur.execute("PRAGMA table_info(notifications)").fetchall()
+    }
 
-        if "ref_id" not in colnames:
-            cur.execute("ALTER TABLE notifications ADD COLUMN ref_id INTEGER")
+    # body
+    if "body" not in cols_not:
+        cur.execute("ALTER TABLE notifications ADD COLUMN body TEXT")
+        if "message" in cols_not:
+            # محاولة نسخ البيانات القديمة
+            try:
+                cur.execute("UPDATE notifications SET body = message WHERE body IS NULL")
+            except Exception:
+                pass
 
-        if "is_read" not in colnames:
-            cur.execute("ALTER TABLE notifications ADD COLUMN is_read INTEGER DEFAULT 0")
-    except Exception as e:
-        logging.warning("ALTER TABLE on notifications failed: %s", e)
+    # type
+    if "type" not in cols_not:
+        cur.execute("ALTER TABLE notifications ADD COLUMN type TEXT")
+
+    # is_read
+    if "is_read" not in cols_not:
+        cur.execute("ALTER TABLE notifications ADD COLUMN is_read INTEGER DEFAULT 0")
+
+    # created_at
+    if "created_at" not in cols_not:
+        cur.execute("ALTER TABLE notifications ADD COLUMN created_at TEXT")
+
+    # ref_type / ref_id
+    if "ref_type" not in cols_not:
+        cur.execute("ALTER TABLE notifications ADD COLUMN ref_type TEXT")
+    if "ref_id" not in cols_not:
+        cur.execute("ALTER TABLE notifications ADD COLUMN ref_id INTEGER")
 
     db.commit()
     db.close()
-        
-# استدعاء الإنشاء مرة واحدة عند تحميل الملف
-init_db()
+
 
 def ensure_default_admin():
     """
@@ -246,9 +281,8 @@ def ensure_default_admin():
     row = cur.fetchone()
     if row:
         db.close()
-        return  # الأدمن موجود مسبقًا، لا نفعل شيئًا
+        return  # الأدمن موجود مسبقًا
 
-    from werkzeug.security import generate_password_hash
     password_hash = generate_password_hash("Admin123!")
 
     # إنشاء المستخدم كأدمن
@@ -294,118 +328,10 @@ def ensure_default_admin():
     db.close()
     print("✅ Default admin created with 1000 USD.")
 
-# ==============================
-# دوال مساعدة على مستوى المستخدمين
-# ==============================
-def create_user(username, email, phone, password_hash, is_admin=False):
-    db = get_db()
-    cur = db.cursor()
-    cur.execute(
-        """
-        INSERT INTO users (username, email, phone, password_hash, is_admin)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (username, email, phone, password_hash, 1 if is_admin else 0),
-    )
-    user_id = cur.lastrowid
 
-    # إنشاء رصيد 0 لكل عملة
-    for c in CURRENCIES:
-        cur.execute(
-            "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, ?)",
-            (user_id, c, 0.0),
-        )
-
-    db.commit()
-    return user_id
-
-
-def get_user(username):
-    """إرجاع dict يمثل المستخدم مع الأرصدة + المعاملات."""
-    db = get_db()
-    row = db.execute(
-        "SELECT * FROM users WHERE username = ?", (username,)
-    ).fetchone()
-    if not row:
-        return None
-
-    user_id = row["id"]
-
-    # الأرصدة
-    balances_rows = db.execute(
-        "SELECT currency, amount FROM balances WHERE user_id = ?", (user_id,)
-    ).fetchall()
-    balance = {c: 0.0 for c in CURRENCIES}
-    for b in balances_rows:
-        if b["currency"] in balance:
-            balance[b["currency"]] = float(b["amount"] or 0.0)
-
-    # المعاملات
-    tx_rows = db.execute(
-        """
-        SELECT type, amount, currency, details, timestamp
-        FROM transactions
-        WHERE user_id = ?
-        ORDER BY timestamp ASC
-        """,
-        (user_id,),
-    ).fetchall()
-    transactions = [
-        {
-            "type": t["type"],
-            "amount": float(t["amount"]),
-            "currency": t["currency"],
-            "details": t["details"],
-            "timestamp": t["timestamp"],
-        }
-        for t in tx_rows
-    ]
-
-    return {
-        "id": user_id,
-        "username": row["username"],
-        "email": row["email"],
-        "phone": row["phone"],
-        "password_hash": row["password_hash"],
-        "is_admin": bool(row["is_admin"]),
-        "balance": balance,
-        "transactions": transactions,
-    }
-
-
-def change_balance(user_id, currency, delta):
-    """زيادة/إنقاص رصيد عملة معينة للمستخدم."""
-    db = get_db()
-    # تأكد أن صف الرصيد موجود
-    db.execute(
-        "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, 0)",
-        (user_id, currency),
-    )
-    db.execute(
-        "UPDATE balances SET amount = amount + ? WHERE user_id = ? AND currency = ?",
-        (float(delta), user_id, currency),
-    )
-    db.commit()
-
-
-def log_transaction(user_id, tx_type, amount, currency, details=""):
-    db = get_db()
-    db.execute(
-        """
-        INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (
-            user_id,
-            tx_type,
-            float(amount),
-            currency,
-            details,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        ),
-    )
-    db.commit()
-
+# استدعاء الإنشاء + إنشاء الأدمن الافتراضي مرة واحدة عند تحميل الملف
+init_db()
+ensure_default_admin()
 
 # ==============================
 # دوال الإشعارات
