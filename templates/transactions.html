@@ -1,5 +1,3 @@
-<!-- C:\Users\PC\Desktop\currency_converter_project\templates\transactions.html -->
-
 <!DOCTYPE html>
 <html lang="{{ session.get('lang','ar') }}">
 <head>
@@ -46,6 +44,27 @@
     }
     h1{margin:0 0 16px}
     .muted{opacity:.8}
+
+    .pager{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      margin-top:14px;
+      font-size:14px;
+    }
+    .pager a{
+      color:#06c;
+      text-decoration:none;
+      padding:6px 10px;
+      border-radius:999px;
+      background:#eef;
+    }
+    .pager a:hover{
+      background:#dde;
+    }
+    .page-label{
+      opacity:.8;
+    }
   </style>
 </head>
 <body>
@@ -53,8 +72,19 @@
   <div>
     <a href="{{ url_for('index') }}">← {{ t('home') }}</a>
   </div>
+
   <div>{{ t('recent_transactions') }}</div>
-  <div><!-- كان هنا رابط notifications، أزلناه مؤقتًا --></div>
+
+  <div>
+    <a href="{{ url_for('toggle_language') }}">
+      🌐
+      {% if session.get('lang','ar') == 'ar' %}
+        {{ t('english') }}
+      {% else %}
+        {{ t('arabic') }}
+      {% endif %}
+    </a>
+  </div>
 </header>
 
 <main>
@@ -70,18 +100,44 @@
         </tr>
       </thead>
       <tbody>
-        {% for trow in transactions %}
-        <tr>
-          <td>{{ trow.timestamp }}</td>
-          <td>{{ t(trow.type) }}</td>
-          <td>{{ trow.amount }}</td>
-          <td>{{ trow.currency }}</td>
-        </tr>
+        {% if transactions %}
+          {% for trow in transactions %}
+          <tr>
+            <td>{{ trow.timestamp }}</td>
+            <td>{{ t(trow.type) }}</td>
+            <td>{{ trow.amount }}</td>
+            <td>{{ trow.currency }}</td>
+          </tr>
+          {% endfor %}
         {% else %}
-        <tr><td colspan="4" class="muted">{{ t('no_transactions_yet') }}</td></tr>
-        {% endfor %}
+        <tr>
+          <td colspan="4" class="muted">{{ t('no_transactions_yet') }}</td>
+        </tr>
+        {% endif %}
       </tbody>
     </table>
+
+    {% if has_prev or has_next %}
+    <div class="pager">
+      {% if has_prev %}
+      <a href="{{ url_for('recent_transactions', page=page-1) }}">
+        ⬅️ {{ t('previous') }}
+      </a>
+      {% else %}
+      <span></span>
+      {% endif %}
+
+      <span class="page-label">
+        {{ t('page') }} {{ page }}
+      </span>
+
+      {% if has_next %}
+      <a href="{{ url_for('recent_transactions', page=page+1) }}">
+        {{ t('next') }} ➡️
+      </a>
+      {% endif %}
+    </div>
+    {% endif %}
   </section>
 </main>
 </body>

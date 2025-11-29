@@ -91,18 +91,18 @@
     "processed_by": "تمت المعالجة بواسطة",
     "processed_at": "وقت المعالجة",
 
-    "about_app": "معلومات حول التطبيق",
+"about_app": "معلومات حول التطبيق",
     "about_app_points": [
-      "عمولة السحب هي 1% من المبلغ المراد سحبه، أما التحويل فهو بدون أي عمولة.",
-      "هذا التطبيق يوفر للمستخدم الحصول على عملات دولية أخرى بطريقة سهلة ومتاحة.",
-      "قسم الإشعارات هو المكان الذي سيتلقى فيه المستخدم المطالب أو الحلول.",
-      "الشحن سيكون ب USDT/BTC عبر باينانس أوتوماتيكياً بعد اختيار المبلغ ونجاح العملية.",
-      "أقل مبلغ للسحب هو 30 دولار أو ما يعادلها، وأقصى مبلغ 5000 دولار.",
-      "مدة وصول السحب تتراوح بين 20 دقيقة و 12 ساعة حسب كثافة السحوبات.",
-      "التطبيق يوفّر أرصدة بعملات محلية لتجربة أفضل وتجنب الاقتطاعات.",
-      "يمكن الاطلاع على جميع معاملاتك وتحركاتك المالية.",
-      "المعلومات البنكية ضرورية لإرسال الحوالة بشكل صحيح.",
-      "لأي مشكلة أو استفسار يرجى التواصل عبر بوابة الدعم."
+      "الشحن سيكون أوتوماتيكيًا بـ USDT/BTC أو يدويًا عبر USDT بعد التحقق من المبلغ ورقم العملية (TxID).",
+      "أقل مبلغ للشحن هو 10 دولار ($10).",
+      "أقل مبلغ للسحب هو 35 دولار ($35) أو ما يعادلها بالعملات الأخرى.",
+      "عمولة السحب هي 1٪ للمبالغ التي تتجاوز 100$، و5٪ للمبالغ التي تقل عن 100$ من رصيد السحب.",
+      "تحويل الأرصدة بين العملات داخل حسابك لا تُحتسب عليه عمولة من المنصة، لكن قد يختلف الناتج حسب سعر الصرف في السوق.",
+      "مدة معالجة طلبات السحب قد تتراوح بين 20 دقيقة و12 ساعة بحسب ضغط العمليات.",
+      "أي استفسار أو مشكلة يمكن حلّها عبر التواصل مع الإدارة عبر تيليجرام أو واتساب من خلال قنوات الدعم المعتمدة.",
+      "يجب الإبلاغ عن أي خطأ أو مشكلة في الرصيد أو العمليات مع تقديم مستندات صالحة (مثل TxID أو لقطات شاشة) ليتمكن فريق الإدارة من مراجعتها ومعالجتها.",
+      "كل الأرصدة تُدار بنزاهة وشفافية اعتمادًا على البيانات الموثقة التي يقدّمها المستخدم.",
+      "الاطلاع على معلومات المنصة يُعتبر ضرورة أساسية، وفي حكم العقد الذي تُبنى عليه جميع الأنشطة داخل المنصة."
     ],
 
     "tx_withdraw": "📤 طلب سحب",
@@ -215,20 +215,20 @@
     "processed_by": "Processed by",
     "processed_at": "Processed at",
 
-    "about_app": "About the Application",
+"about_app": "About the Application",
     "about_app_points": [
-      "Withdrawal fee is 1% of the amount requested, while currency conversion is free of charge.",
-      "This application helps users obtain international currencies easily and conveniently.",
-      "The notifications section is where users receive important updates or solutions.",
-      "Top-up is done with USDT/BTC via Binance automatically after amount selection and success.",
-      "Minimum withdrawal is $30 or equivalent, maximum is $5000.",
-      "Withdrawal processing time ranges between 20 minutes and 12 hours depending on load.",
-      "The app provides balances in local currencies to avoid high fees and ensure a better experience.",
-      "You can track all your transactions and financial activities.",
-      "Bank information is required to send your transfer correctly.",
-      "For any issues or inquiries, please contact us through the support portal."
+      "Top-up can be done automatically with USDT/BTC or manually via USDT after verifying the amount and TxID.",
+      "The minimum top-up amount is 10 USD ($10).",
+      "The minimum withdrawal amount is 35 USD ($35) or equivalent in other currencies.",
+      "Withdrawal fee is 1% for amounts above 100$, and 5% for amounts below 100$ from the withdrawal balance.",
+      "Currency conversion between balances inside your account has no fee from the platform, but the final result may vary according to market exchange rates.",
+      "Withdrawal processing time may range from 20 minutes up to 12 hours, depending on system load.",
+      "For any question or issue, you can contact the admin team via Telegram or WhatsApp through the official support channels.",
+      "You must report any error or issue in your balance or transactions and provide valid documents (TxID, screenshots, etc.) so the team can review and fix it.",
+      "All balances are managed with integrity and transparency, based only on verified data provided by the user.",
+      "Reading and understanding this information is essential and is considered an implicit agreement that governs all activities inside the platform."
     ],
-
+    
     "tx_withdraw": "📤 Withdraw request",
     "tx_convert": "🔁 Balance conversion",
     "tx_deposit_binance": "💳 Binance Pay deposit",

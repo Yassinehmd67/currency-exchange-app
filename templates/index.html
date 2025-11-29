@@ -198,6 +198,28 @@
             background: #e5e7eb;
             color: #111827;
         }
+
+        /* شريط صفحات سجل العمليات في الداشبورد */
+        .tx-pager {
+            display: none; /* تظهر فقط عند وجود أكثر من 5 معاملات */
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+        .tx-pager button {
+            padding: 6px 10px;
+            font-size: 13px;
+            background: #e5e7eb;
+            color: #111827;
+        }
+        .tx-pager button:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+        .tx-page-label {
+            opacity: 0.8;
+        }
     </style>
 </head>
 <body>
@@ -212,10 +234,14 @@
         {% endif %}
     </div>
     <div>
-    <a href="{{ url_for('toggle_language') }}">
-        🌐 {% if session.get('lang','ar') == 'ar' %}English{% else %}العربية{% endif %}
-    </a>
-
+        <a href="{{ url_for('toggle_language') }}">
+  🌐
+  {% if session.get('lang','ar') == 'ar' %}
+    {{ t('english') }}
+  {% else %}
+    {{ t('arabic') }}
+  {% endif %}
+</a>
     <a href="{{ url_for('notifications') }}" style="position:relative;">
         🔔 {% if session.get('lang') == 'en' %}Notifications{% else %}الإشعارات{% endif %}
         {% if unread_notifications and unread_notifications > 0 %}
@@ -372,6 +398,7 @@ Top-up will be reviewed manually, then the balance will be added to your account
         {% endif %}
     </div>
 </div>
+
         <!-- طلب السحب -->
         <div class="card">
             <h3 class="section-title">
@@ -459,7 +486,7 @@ Your balance will be locked immediately and the withdrawal will be processed man
         <p id="convert_result" style="text-align:center; font-weight:bold; margin-top:8px;"></p>
     </div>
 
-    <!-- سجل العمليات -->
+    <!-- سجل العمليات (مع 5 عناصر في كل صفحة) -->
     <div class="card">
         <div class="tx-toggle" onclick="toggleTx()">
             {% if session.get('lang') == 'en' %}
@@ -468,36 +495,133 @@ Your balance will be locked immediately and the withdrawal will be processed man
                 📜 إظهار / إخفاء سجل العمليات
             {% endif %}
         </div>
+
         <ul id="tx_list" class="tx-list" style="display:none;">
-            {% for tx in user.transactions|reverse %}
-                <li class="tx-item">
-                    <div class="badge">{{ tx.type }}</div><br>
-                    <span class="ts">🕒 {{ tx.timestamp }}</span><br>
-                    💰 {{ tx.amount }} {{ tx.currency or '' }}<br>
-                    {% if tx.details %}
-                        📝 {{ tx.details }}
-                    {% endif %}
-                </li>
+            {% if user.transactions %}
+                {% for tx in user.transactions|reverse %}
+                    <li class="tx-item real-tx">
+                        <div class="badge">{{ tx.type }}</div><br>
+                        <span class="ts">🕒 {{ tx.timestamp }}</span><br>
+                        💰 {{ tx.amount }} {{ tx.currency or '' }}<br>
+                        {% if tx.details %}
+                            📝 {{ tx.details }}
+                        {% endif %}
+                    </li>
+                {% endfor %}
             {% else %}
-                <li class="tx-item">
+                <li class="tx-item no-tx">
                     {% if session.get('lang') == 'en' %}
                         No transactions yet.
                     {% else %}
                         لا توجد عمليات بعد.
                     {% endif %}
                 </li>
-            {% endfor %}
+            {% endif %}
         </ul>
+
+        <div id="tx_pager" class="tx-pager">
+            <button id="tx_prev" type="button" onclick="txPrev()">
+                {% if session.get('lang') == 'en' %}
+                    ⬅️ Previous
+                {% else %}
+                    ⬅️ السابق
+                {% endif %}
+            </button>
+            <span id="tx_page_label" class="tx-page-label">
+                {% if session.get('lang') == 'en' %}
+                    Page 1
+                {% else %}
+                    الصفحة 1
+                {% endif %}
+            </span>
+            <button id="tx_next" type="button" onclick="txNext()">
+                {% if session.get('lang') == 'en' %}
+                    Next ➡️
+                {% else %}
+                    التالي ➡️
+                {% endif %}
+            </button>
+        </div>
     </div>
 
 </div>
 
 <script>
-    function toggleTx() {
-        const el = document.getElementById('tx_list');
-        el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
+    // ========= سجل العمليات في الداشبورد (5 في الصفحة) =========
+    const TX_PAGE_SIZE = 5;
+    let txPage = 1;
+    let txInitialized = false;
+
+    function renderTxPage() {
+        const items = document.querySelectorAll('#tx_list .tx-item.real-tx');
+        const pager = document.getElementById('tx_pager');
+        const label = document.getElementById('tx_page_label');
+        const prevBtn = document.getElementById('tx_prev');
+        const nextBtn = document.getElementById('tx_next');
+
+        const total = items.length;
+        if (!total) {
+            if (pager) pager.style.display = 'none';
+            return;
+        }
+
+        const totalPages = Math.ceil(total / TX_PAGE_SIZE);
+        if (txPage > totalPages) txPage = totalPages;
+        if (txPage < 1) txPage = 1;
+
+        const start = (txPage - 1) * TX_PAGE_SIZE;
+        const end = start + TX_PAGE_SIZE;
+
+        items.forEach((li, idx) => {
+            if (idx >= start && idx < end) {
+                li.style.display = 'block';
+            } else {
+                li.style.display = 'none';
+            }
+        });
+
+        if (totalPages > 1) {
+            pager.style.display = 'flex';
+        } else {
+            pager.style.display = 'none';
+        }
+
+        // تحديث النص حسب اللغة
+        const isEn = "{{ session.get('lang','ar') }}" === "en";
+        if (isEn) {
+            label.textContent = "Page " + txPage;
+        } else {
+            label.textContent = "الصفحة " + txPage;
+        }
+
+        prevBtn.disabled = (txPage <= 1);
+        nextBtn.disabled = (txPage >= totalPages);
     }
 
+    function txNext() {
+        txPage++;
+        renderTxPage();
+    }
+
+    function txPrev() {
+        txPage--;
+        renderTxPage();
+    }
+
+    function toggleTx() {
+        const el = document.getElementById('tx_list');
+        if (el.style.display === 'none' || !el.style.display) {
+            el.style.display = 'block';
+            if (!txInitialized) {
+                txInitialized = true;
+                renderTxPage();
+            }
+        } else {
+            el.style.display = 'none';
+        }
+    }
+
+    // ========= محول العملات =========
     async function convertCurrency() {
         const amount = parseFloat(document.getElementById('convert_amount').value);
         const from = document.getElementById('convert_from').value;

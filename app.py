@@ -117,6 +117,7 @@ def get_db():
         g.db.row_factory = sqlite3.Row
     return g.db
 
+
 @app.teardown_appcontext
 def close_db(exc):
     db = g.pop("db", None)
@@ -229,7 +230,7 @@ def init_db():
     if "processed_at" not in cols_w:
         cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_at TEXT")
 
-    # ترقية جدول notifications (لو كانت نسخة قديمة فيها message/kind/status فقط)
+    # ترقية جدول notifications
     cols_not = {
         c["name"] for c in cur.execute("PRAGMA table_info(notifications)").fetchall()
     }
@@ -238,7 +239,6 @@ def init_db():
     if "body" not in cols_not:
         cur.execute("ALTER TABLE notifications ADD COLUMN body TEXT")
         if "message" in cols_not:
-            # محاولة نسخ البيانات القديمة
             try:
                 cur.execute("UPDATE notifications SET body = message WHERE body IS NULL")
             except Exception:
@@ -336,7 +336,6 @@ ensure_default_admin()
 # ==============================
 # دوال مساعدة على مستوى المستخدمين
 # ==============================
-
 def create_user(username, email, phone, password_hash, is_admin=False):
     db = get_db()
     cur = db.cursor()
@@ -445,36 +444,44 @@ def log_transaction(user_id, tx_type, amount, currency, details=""):
     )
     db.commit()
 
+
 # ==============================
 # دوال الإشعارات
 # ==============================
-def create_notification(user_id, kind, title, body, ref_id=None):
+def create_notification(user_id, kind, title, message, ref_id=None):
     """
-    kind: 'deposit' أو 'withdrawal'
-    status: تبدأ دائماً unread
+    kind: نوع الإشعار (مثال: 'deposit_approved', 'deposit_rejected',
+          'withdraw_approved', 'withdraw_rejected' ...)
+    - يتم دائماً إنشاء الإشعار بحالة غير مقروءة is_read = 0
+    - نخزّن kind في عمود type، ونصّ الإشعار في body
     """
     db = get_db()
-    db.execute(
-        """
-        INSERT INTO notifications (user_id, kind, ref_id, title, body, status, created_at)
-        VALUES (?, ?, ?, ?, ?, 'unread', ?)
-        """,
-        (
-            user_id,
-            kind,
-            ref_id,
-            title,
-            body,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        ),
-    )
-    db.commit()
+    try:
+        db.execute(
+            """
+            INSERT INTO notifications
+                (user_id, title, body, type, is_read, created_at, ref_type, ref_id)
+            VALUES
+                (?,      ?,     ?,    ?,    0,       ?,          NULL,    ?)
+            """,
+            (
+                user_id,
+                title,
+                message,
+                kind,  # نخزّن kind في عمود type
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                ref_id,
+            ),
+        )
+        db.commit()
+    except sqlite3.OperationalError as e:
+        logging.warning("create_notification schema error: %s", e)
 
 
 def count_unread_notifications(user_id: int) -> int:
     """
     إرجاع عدد الإشعارات غير المقروءة للمستخدم.
-    لو كان هناك مشكلة في سكيمة قاعدة البيانات على السيرفر (أعمدة ناقصة مثلاً)
+    لو كان هناك مشكلة في سكيمة قاعدة البيانات على السيرفر
     لا نُسقط الموقع، بل نعيد 0 ونكتب تحذير في اللوج.
     """
     db = get_db()
@@ -487,6 +494,7 @@ def count_unread_notifications(user_id: int) -> int:
     except sqlite3.OperationalError as e:
         logging.warning("count_unread_notifications schema error: %s", e)
         return 0
+
 
 # ==============================
 # المسارات الأساسية (المستخدم)
@@ -782,7 +790,7 @@ def binance_deposit_proof():
         ),
     )
 
-    # تسجيل العملية في سجل المعاملات (اختياري لكنه مفيد للتتبع)
+    # تسجيل العملية في سجل المعاملات
     log_transaction(
         user["id"],
         "Binance Deposit Proof",
@@ -795,6 +803,7 @@ def binance_deposit_proof():
 
     flash("✅ تم إرسال إثبات الشحن، سيقوم الأدمن بمراجعته وإضافة الرصيد بعد التحقق.", "success")
     return redirect(url_for("index"))
+
 
 @app.route("/withdraw_request", methods=["POST"])
 def withdraw_request():
@@ -874,6 +883,7 @@ def _ensure_admin():
     if not user or not user["is_admin"]:
         return None
     return user
+
 
 @app.route("/admin/export/transactions")
 def export_transactions_csv():
@@ -1047,7 +1057,13 @@ def admin_withdrawals():
                 f"تم تنفيذ طلب السحب بقيمة {amount} {currency}",
             )
 
-            # إشعار للمستخدم
+            # إشعار ثنائي اللغة للمستخدم
+            title = "تم تنفيذ طلب السحب / Withdrawal executed"
+            body = (
+                f"تم تنفيذ طلب السحب بقيمة {amount} {currency} بنجاح.\n"
+                f"Withdrawal of {amount} {currency} has been processed successfully."
+            )
+
             db.execute(
                 """
                 INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
@@ -1055,8 +1071,8 @@ def admin_withdrawals():
                 """,
                 (
                     user_id,
-                    "تم تنفيذ طلب السحب",
-                    f"تم تنفيذ طلب السحب بقيمة {amount} {currency} بنجاح.",
+                    title,
+                    body,
                     "withdraw_approved",
                     now_str,
                 ),
@@ -1092,7 +1108,15 @@ def admin_withdrawals():
                 "تم رفض طلب السحب وإرجاع المبلغ إلى الرصيد.",
             )
 
-            # إشعار للمستخدم
+            # إشعار ثنائي اللغة للمستخدم
+            title = "تم رفض طلب السحب / Withdrawal rejected"
+            body = (
+                f"تم رفض طلب السحب بقيمة {amount} {currency} "
+                f"وتم إرجاع المبلغ إلى رصيد حسابك.\n"
+                f"Withdrawal of {amount} {currency} has been rejected and "
+                f"the amount has been returned to your balance."
+            )
+
             db.execute(
                 """
                 INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
@@ -1100,9 +1124,8 @@ def admin_withdrawals():
                 """,
                 (
                     user_id,
-                    "تم رفض طلب السحب",
-                    f"تم رفض طلب السحب بقيمة {amount} {currency} "
-                    f"وتم إرجاع المبلغ إلى رصيد حسابك.",
+                    title,
+                    body,
                     "withdraw_rejected",
                     now_str,
                 ),
@@ -1128,6 +1151,7 @@ def admin_withdrawals():
     ).fetchall()
 
     return render_template("admin_withdrawals.html", withdrawals=withdrawals)
+
 
 @app.route("/admin/deposits", methods=["GET", "POST"])
 def admin_deposits():
@@ -1176,18 +1200,24 @@ def admin_deposits():
                 fiat_currency,
                 details=f"Approved topup #{dep['id']} via Binance Pay",
             )
-            title = "تم قبول طلب الشحن"
-            body = f"تم شحن حسابك بمبلغ {amount} {fiat_currency} بنجاح."
+
+            title = "تم قبول طلب الشحن / Top-up approved"
+            body = (
+                f"تم شحن حسابك بمبلغ {amount} {fiat_currency} بنجاح.\n"
+                f"Your account has been credited with {amount} {fiat_currency} successfully."
+            )
             notif_type = "deposit_approved"
         else:
-            title = "تم رفض طلب الشحن"
+            title = "تم رفض طلب الشحن / Top-up rejected"
             body = (
                 f"تم رفض طلب شحن بقيمة {amount} {fiat_currency}. "
-                "يرجى التأكد من التحويل أو التواصل مع الدعم."
+                "يرجى التأكد من التحويل أو التواصل مع الدعم.\n"
+                f"Top-up request of {amount} {fiat_currency} has been rejected. "
+                "Please verify your transfer or contact support."
             )
             notif_type = "deposit_rejected"
 
-        # تحديث سجل الشحن مع دعم سكيمة قديمة (بدون processed_by / processed_at)
+        # تحديث سجل الشحن (مع الأعمدة الجديدة)
         try:
             db.execute(
                 """
@@ -1204,12 +1234,12 @@ def admin_deposits():
                 (new_status, did),
             )
 
-        # إدخال إشعار مع دعم سكيمة قديمة (بدون ref_table / ref_id)
+        # إدخال إشعار، باستخدام ref_type / ref_id (متوافقة مع السكيمة الحالية)
         try:
             db.execute(
                 """
                 INSERT INTO notifications
-                    (user_id, title, body, type, is_read, created_at, ref_table, ref_id)
+                    (user_id, title, body, type, is_read, created_at, ref_type, ref_id)
                 VALUES (?, ?, ?, ?, 0, ?, 'pending_deposits', ?)
                 """,
                 (user_id, title, body, notif_type, now_str, dep["id"]),
@@ -1241,6 +1271,7 @@ def admin_deposits():
 
     return render_template("admin_deposits.html", deposits=deposits)
 
+
 # ==============================
 # صفحة الإشعارات للمستخدم
 # ==============================
@@ -1255,22 +1286,31 @@ def notifications():
         return redirect(url_for("login"))
 
     db = get_db()
-    rows = db.execute(
-        """
-        SELECT id, kind, ref_id, title, body, status, created_at
-        FROM notifications
-        WHERE user_id = ?
-        ORDER BY created_at DESC
-        """,
-        (user["id"],),
-    ).fetchall()
 
-    # نحدد جميع الإشعارات كـ read عند فتح الصفحة
-    db.execute(
-        "UPDATE notifications SET status = 'read' WHERE user_id = ? AND status = 'unread'",
-        (user["id"],),
-    )
-    db.commit()
+    # جلب الإشعارات
+    try:
+        rows = db.execute(
+            """
+            SELECT id, title, body, type, ref_type, ref_id, is_read, created_at
+            FROM notifications
+            WHERE user_id = ?
+            ORDER BY datetime(created_at) DESC, id DESC
+            """,
+            (user["id"],),
+        ).fetchall()
+    except sqlite3.OperationalError as e:
+        logging.error("notifications select error: %s", e)
+        rows = []
+
+    # تحديث الإشعارات إلى "مقروءة"
+    try:
+        db.execute(
+            "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0",
+            (user["id"],),
+        )
+        db.commit()
+    except sqlite3.OperationalError as e:
+        logging.error("notifications update error: %s", e)
 
     return render_template("notifications.html", notifications=rows)
 
@@ -1278,6 +1318,10 @@ def notifications():
 # ==============================
 # صفحات إضافية
 # ==============================
+# عدد المعاملات في كل صفحة
+TRANSACTIONS_PER_PAGE = 5
+
+
 @app.route("/transactions")
 def recent_transactions():
     if "username" not in session:
@@ -1288,7 +1332,53 @@ def recent_transactions():
         session.clear()
         return redirect(url_for("login"))
 
-    return render_template("transactions.html", transactions=user["transactions"])
+    db = get_db()
+
+    # رقم الصفحة من الـ query string ?page=2
+    try:
+        page = int(request.args.get("page", 1) or 1)
+    except ValueError:
+        page = 1
+
+    if page < 1:
+        page = 1
+
+    per_page = TRANSACTIONS_PER_PAGE
+    offset = (page - 1) * per_page
+
+    # جلب 5 سجلات فقط (مع ترتيب من الأحدث إلى الأقدم)
+    rows = db.execute(
+        """
+        SELECT type, amount, currency, details, timestamp
+        FROM transactions
+        WHERE user_id = ?
+        ORDER BY datetime(timestamp) DESC, id DESC
+        LIMIT ? OFFSET ?
+        """,
+        (user["id"], per_page, offset),
+    ).fetchall()
+
+    # لمعرفة هل توجد صفحة تالية أم لا
+    next_row = db.execute(
+        """
+        SELECT 1
+        FROM transactions
+        WHERE user_id = ?
+        LIMIT 1 OFFSET ?
+        """,
+        (user["id"], offset + per_page),
+    ).fetchone()
+
+    has_next = next_row is not None
+    has_prev = page > 1
+
+    return render_template(
+        "transactions.html",
+        transactions=rows,
+        page=page,
+        has_next=has_next,
+        has_prev=has_prev,
+    )
 
 
 @app.route("/toggle_language")
@@ -1313,6 +1403,7 @@ def about():
 def support():
     return render_template("support.html")
 
+
 # إنشاء حساب أدمن تلقائي عند التشغيل الأول (Render)
 def ensure_admin():
     db = sqlite3.connect(DB_PATH)
@@ -1320,17 +1411,22 @@ def ensure_admin():
     cur.execute("SELECT id FROM users WHERE username='admin'")
     if not cur.fetchone():
         from werkzeug.security import generate_password_hash
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO users (username, email, phone, password_hash, is_admin)
             VALUES ('admin', 'admin@example.com', '', ?, 1)
-        """, (generate_password_hash("admin123"),))
+            """,
+            (generate_password_hash("admin123"),),
+        )
         db.commit()
         print("✅ Admin account created on Render (admin / admin123)")
     else:
         print("ℹ️ Admin account already exists.")
     db.close()
 
+
 ensure_admin()
+
 
 # ==============================
 # تشغيل التطبيق

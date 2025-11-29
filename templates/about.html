@@ -1,5 +1,3 @@
-<!-- C:\Users\PC\Desktop\currency_converter_project\templates\about.html -->
-
 <!DOCTYPE html>
 <html lang="{{ session.get('lang','ar') }}">
 <head>
@@ -29,20 +27,47 @@
     main{
       max-width:900px;
       margin:24px auto;
-      padding:0 12px;
+      padding:0 12px 32px;
     }
     .card{
       background:#fff;
       border:1px solid #e8e8ef;
       border-radius:14px;
-      padding:16px;
+      padding:20px 18px;
       box-shadow:0 2px 10px rgba(0,0,0,.03);
-      margin-bottom:16px;
+      margin-bottom:18px;
     }
-    h1,h2{margin:6px 0 12px}
-    ul{margin:0;padding-inline-start:22px}
-    li{margin:6px 0}
-    .muted{opacity:.85}
+    h1,h2,h3{
+      margin:6px 0 12px;
+      color:#111827;
+    }
+    p{
+      margin:6px 0 10px;
+      line-height:1.8;
+      color:#374151;
+    }
+    ul{
+      margin:6px 0 6px;
+      padding-inline-start:22px;
+    }
+    li{
+      margin:4px 0;
+      line-height:1.7;
+      color:#374151;
+    }
+    .section-title{
+      border-right:4px solid #2563eb;
+      padding-right:8px;
+      margin-bottom:8px;
+    }
+    .muted{
+      opacity:.9;
+    }
+    .tagline{
+      font-size:14px;
+      color:#6b7280;
+      margin-bottom:10px;
+    }
   </style>
 </head>
 <body>
@@ -51,18 +76,212 @@
     <a href="{{ url_for('index') }}">← {{ t('home') }}</a>
   </div>
   <div>{{ t('about_app') }}</div>
-  <div><!-- مكان فارغ كان فيه notifications --></div>
+  <div></div>
 </header>
 
 <main>
+
+  <!-- مقدمة -->
   <section class="card">
     <h2>ℹ️ {{ t('about_app') }}</h2>
-    <ul class="muted">
-      {% for point in t('about_app_points') %}
-        <li>{{ point }}</li>
-      {% endfor %}
-    </ul>
+
+    {% if session.get('lang','ar') == 'en' %}
+      <p class="tagline">
+        An internal platform to manage balances, currency exchanges, deposits and withdrawals
+        in a simple and transparent way.
+      </p>
+      <p class="muted">
+        This page explains the basic rules for top-up, withdrawals and fees, and clarifies both
+        user and admin responsibilities inside the platform.
+      </p>
+    {% else %}
+      <p class="tagline">
+        منصة داخلية لإدارة الأرصدة وتحويل العملات والشحن والسحب بطريقة بسيطة وشفافة.
+      </p>
+      <p class="muted">
+        هذه الصفحة تشرح القواعد الأساسية للشحن والسحب والعمولات، وتوضّح مسؤوليات
+        المستخدم والإدارة داخل المنصة.
+      </p>
+    {% endif %}
   </section>
+
+  <!-- الشحن -->
+  <section class="card">
+    <h3 class="section-title">
+      {% if session.get('lang','ar') == 'en' %}
+        🟢 Top-up (Deposit)
+      {% else %}
+        🟢 الشحن (الإيداع)
+      {% endif %}
+    </h3>
+
+    {% if session.get('lang','ar') == 'en' %}
+      <ul>
+        <li>
+          Top-up is done <strong>automatically with USDT/BTC</strong> or
+          <strong>manually with USDT</strong> after verifying the amount and the TxID.
+        </li>
+        <li>
+          The minimum top-up amount is <strong>$10</strong>.
+        </li>
+        <li>
+          Top-up details are always verified manually by the admin before the balance
+          is added to your account.
+        </li>
+      </ul>
+    {% else %}
+      <ul>
+        <li>
+          الشحن سيكون <strong>أوتوماتيكيّاً USDT/BTC</strong> أو
+          <strong>يدوياً عبر USDT</strong> بعد التحقق من المبلغ ورقم العملية (TxID).
+        </li>
+        <li>
+          أقل مبلغ للشحن هو <strong>10 دولار ($10)</strong>.
+        </li>
+        <li>
+          يتم التحقق من بيانات الشحن يدويًا من طرف الإدارة قبل إضافة الرصيد إلى حسابك.
+        </li>
+      </ul>
+    {% endif %}
+  </section>
+
+  <!-- السحب والعمولات -->
+  <section class="card">
+    <h3 class="section-title">
+      {% if session.get('lang','ar') == 'en' %}
+        📤 Withdrawals & Fees
+      {% else %}
+        📤 السحب والعمولات
+      {% endif %}
+    </h3>
+
+    {% if session.get('lang','ar') == 'en' %}
+      <ul>
+        <li>
+          The minimum withdrawal amount is <strong>$35</strong>.
+        </li>
+        <li>
+          <strong>Withdrawal fees:</strong><br>
+          • <strong>1%</strong> for withdrawal amounts above <strong>$100</strong>.<br>
+          • <strong>5%</strong> for withdrawal amounts below <strong>$100</strong> from the
+            withdrawable balance.
+        </li>
+        <li>
+          <strong>Currency conversion inside your balance</strong> has no platform fee,
+          but the final result may vary due to market exchange rates.
+        </li>
+      </ul>
+    {% else %}
+      <ul>
+        <li>
+          أقل مبلغ للسحب هو <strong>35 دولار ($35)</strong>.
+        </li>
+        <li>
+          <strong>عمولة السحب:</strong><br>
+          • <strong>1٪</strong> للمبالغ التي تتجاوز <strong>100$</strong>.<br>
+          • <strong>5٪</strong> للمبالغ التي تقل عن <strong>100$</strong> من رصيد السحب.
+        </li>
+        <li>
+          عمليات <strong>التحويل بين العملات داخل رصيدك</strong> لا تُحتسب عليها عمولة من المنصة،
+          ولكن قد تختلف نتيجة سعر الصرف حسب السوق.
+        </li>
+      </ul>
+    {% endif %}
+  </section>
+
+  <!-- التواصل والمسؤولية -->
+  <section class="card">
+    <h3 class="section-title">
+      {% if session.get('lang','ar') == 'en' %}
+        📞 Contact & Responsibility
+      {% else %}
+        📞 التواصل وحلّ الإشكالات
+      {% endif %}
+    </h3>
+
+    {% if session.get('lang','ar') == 'en' %}
+      <ul>
+        <li>
+          For any questions or issues, you can contact the admin via:
+          <br>✔ <strong>Telegram</strong>
+          <br>✔ <strong>WhatsApp</strong>
+          <br>
+          (Official contact accounts will be shared when needed or via the support page).
+        </li>
+        <li>
+          You must report any error or problem in your balance or transactions as soon as
+          you notice it, and provide <strong>valid documents</strong> (screenshots, TxID,
+          or any proof of the operation) so that the admin can review and resolve it.
+        </li>
+        <li>
+          The admin is committed to managing balances with honesty and transparency, based
+          only on documented data provided by the user.
+        </li>
+        <li>
+          <strong>Disclaimer:</strong>
+          Any amount abandoned by the user, or errors that are not reported in reasonable time,
+          are the responsibility of the user and not of the platform.
+        </li>
+      </ul>
+    {% else %}
+      <ul>
+        <li>
+          لأي استفسار أو مشكلة يمكنكم التواصل مع الإدارة عبر:
+          <br>✔ <strong>تليجرام</strong>
+          <br>✔ <strong>واتساب</strong>
+          <br>
+          (سيتم تزويدكم بحسابات التواصل الرسمية عند الحاجة أو من خلال صفحة الدعم).
+        </li>
+        <li>
+          يجب الإبلاغ عن أي خطأ أو مشكلة في الرصيد أو العمليات فور ملاحظتها،
+          مع تقديم <strong>مستندات صالحة</strong> (لقطات شاشة، TxID، أو ما يثبت العملية)
+          حتى تتمكن الإدارة من مراجعتها ومعالجتها.
+        </li>
+        <li>
+          الإدارة ملتزمة بإدارة الأرصدة بنزاهة وشفافية، وتعتمد فقط على
+          البيانات الموثقة التي يقدّمها المستخدم.
+        </li>
+        <li>
+          <strong>إخلاء مسؤولية:</strong>
+          أي مبلغ يتم التخلي عنه من طرف المستخدم، أو عدم الإبلاغ عن الأخطاء في وقت مناسب،
+          لا تتحمل الإدارة مسؤوليته.
+        </li>
+      </ul>
+    {% endif %}
+  </section>
+
+  <!-- بند الاتفاق -->
+  <section class="card">
+    <h3 class="section-title">
+      {% if session.get('lang','ar') == 'en' %}
+        📄 Agreement & Use
+      {% else %}
+        📄 الاتفاق والاستخدام
+      {% endif %}
+    </h3>
+
+    {% if session.get('lang','ar') == 'en' %}
+      <p class="muted">
+        Reading this information is a <strong>mandatory requirement</strong> before using the platform,
+        and is considered an <strong>implicit agreement</strong> that governs all account activity
+        inside the platform.
+      </p>
+      <p class="muted">
+        By using the platform, you confirm that you have read and understood this information and
+        that you agree to the top-up, withdrawal, fees and responsibility policies described here.
+      </p>
+    {% else %}
+      <p class="muted">
+        الاطلاع على هذه المعلومات يُعتبر <strong>ضرورة أساسية</strong> قبل استخدام المنصة،
+        ويُعدّ في حكم <strong>العقد الضمني</strong> الذي تُبنى عليه جميع أنشطة الحساب داخل المنصة.
+      </p>
+      <p class="muted">
+        باستخدامك للمنصة، فأنت تقرّ بأنك قرأت هذه المعلومات وفهمتها،
+        وتوافق على سياسات الشحن والسحب والعمولات والمسؤولية كما هي مبيّنة في هذه الصفحة.
+      </p>
+    {% endif %}
+  </section>
+
 </main>
 </body>
 </html>

@@ -3,13 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>
-    {% if session.get('lang') == 'en' %}
-      Notifications
-    {% else %}
-      الإشعارات
-    {% endif %}
-  </title>
+  <title>{{ t('notifications') }}</title>
   <style>
     body{
       font-family:system-ui,"Cairo",sans-serif;
@@ -58,7 +52,7 @@
       color:#111827;
       margin-inline-start:6px;
     }
-    .unread .card{
+    .unread{
       border-color:#2563eb;
       box-shadow:0 0 0 1px rgba(37,99,235,0.3);
     }
@@ -67,11 +61,15 @@
 <body>
 <header>
   <div>
-    <a href="{{ url_for('index') }}">← {% if session.get('lang') == 'en' %}Back{% else %}العودة للوحة التحكم{% endif %}</a>
+    <a href="{{ url_for('index') }}">
+      ← {% if session.get('lang') == 'en' %}
+           Back to dashboard
+         {% else %}
+           العودة للوحة التحكم
+         {% endif %}
+    </a>
   </div>
-  <div>
-    {% if session.get('lang') == 'en' %}Notifications{% else %}الإشعارات{% endif %}
-  </div>
+  <div>{{ t('notifications') }}</div>
   <div></div>
 </header>
 
@@ -86,14 +84,18 @@
     </p>
   {% else %}
     {% for n in notifications %}
-      <section class="card">
+      {# نعتبر أن is_read = 0 يعني غير مقروء #}
+      <section class="card {% if not n.is_read %}unread{% endif %}">
         <div class="meta">
-          {% if n.kind == 'deposit' %}
+          {% if n.type and 'deposit' in n.type %}
             💳 {% if session.get('lang') == 'en' %}Top-up{% else %}شحن رصيد{% endif %}
-          {% elif n.kind == 'withdrawal' %}
+          {% elif n.type and 'withdraw' in n.type %}
             📤 {% if session.get('lang') == 'en' %}Withdrawal{% else %}سحب{% endif %}
+          {% else %}
+            🔔 {% if session.get('lang') == 'en' %}Notification{% else %}إشعار{% endif %}
           {% endif %}
-          {% if n.status == 'unread' %}
+
+          {% if not n.is_read %}
             <span class="badge">
               {% if session.get('lang') == 'en' %}New{% else %}جديد{% endif %}
             </span>
