@@ -334,6 +334,118 @@ init_db()
 ensure_default_admin()
 
 # ==============================
+# دوال مساعدة على مستوى المستخدمين
+# ==============================
+
+def create_user(username, email, phone, password_hash, is_admin=False):
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        """
+        INSERT INTO users (username, email, phone, password_hash, is_admin)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (username, email, phone, password_hash, 1 if is_admin else 0),
+    )
+    user_id = cur.lastrowid
+
+    # إنشاء رصيد 0 لكل عملة
+    for c in CURRENCIES:
+        cur.execute(
+            "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, ?)",
+            (user_id, c, 0.0),
+        )
+
+    db.commit()
+    return user_id
+
+
+def get_user(username):
+    """إرجاع dict يمثل المستخدم مع الأرصدة + المعاملات."""
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM users WHERE username = ?", (username,)
+    ).fetchone()
+    if not row:
+        return None
+
+    user_id = row["id"]
+
+    # الأرصدة
+    balances_rows = db.execute(
+        "SELECT currency, amount FROM balances WHERE user_id = ?", (user_id,)
+    ).fetchall()
+    balance = {c: 0.0 for c in CURRENCIES}
+    for b in balances_rows:
+        balance[b["currency"]] = float(b["amount"] or 0.0)
+
+    # المعاملات
+    tx_rows = db.execute(
+        """
+        SELECT type, amount, currency, details, timestamp
+        FROM transactions
+        WHERE user_id = ?
+        ORDER BY timestamp DESC
+        """,
+        (user_id,),
+    ).fetchall()
+
+    transactions = [
+        {
+            "type": t["type"],
+            "amount": float(t["amount"]),
+            "currency": t["currency"],
+            "details": t["details"],
+            "timestamp": t["timestamp"],
+        }
+        for t in tx_rows
+    ]
+
+    return {
+        "id": user_id,
+        "username": row["username"],
+        "email": row["email"],
+        "phone": row["phone"],
+        "password_hash": row["password_hash"],
+        "is_admin": bool(row["is_admin"]),
+        "balance": balance,
+        "transactions": transactions,
+    }
+
+
+def change_balance(user_id, currency, delta):
+    """زيادة/إنقاص رصيد عملة معينة للمستخدم."""
+    db = get_db()
+    db.execute(
+        "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, 0)",
+        (user_id, currency),
+    )
+    db.execute(
+        "UPDATE balances SET amount = amount + ? WHERE user_id = ? AND currency = ?",
+        (float(delta), user_id, currency),
+    )
+    db.commit()
+
+
+def log_transaction(user_id, tx_type, amount, currency, details=""):
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user_id,
+            tx_type,
+            float(amount),
+            currency,
+            details,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+    db.commit()
+
+# ==============================
 # دوال الإشعارات
 # ==============================
 def create_notification(user_id, kind, title, body, ref_id=None):
