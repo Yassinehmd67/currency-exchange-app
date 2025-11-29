@@ -33,7 +33,7 @@ load_dotenv()
 
 EXCHANGE_API_KEY = os.getenv("EXCHANGE_API_KEY")
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme")
-DB_PATH = os.getenv("DB_PATH", "data.db")
+DB_PATH = os.getenv("DB_PATH", "database_v2.db")
 BINANCE_UID = os.getenv("BINANCE_UID", "YOUR_BINANCE_UID_HERE")
 
 # رابط الشحن الأوتوماتيكي 100 USDT
@@ -471,14 +471,22 @@ def create_notification(user_id, kind, title, body, ref_id=None):
     db.commit()
 
 
-def count_unread_notifications(user_id):
+def count_unread_notifications(user_id: int) -> int:
+    """
+    إرجاع عدد الإشعارات غير المقروءة للمستخدم.
+    لو كان هناك مشكلة في سكيمة قاعدة البيانات على السيرفر (أعمدة ناقصة مثلاً)
+    لا نُسقط الموقع، بل نعيد 0 ونكتب تحذير في اللوج.
+    """
     db = get_db()
-    row = db.execute(
-        "SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND status = 'unread'",
-        (user_id,),
-    ).fetchone()
-    return (row["c"] or 0) if row else 0
-
+    try:
+        row = db.execute(
+            "SELECT COUNT(*) AS cnt FROM notifications WHERE user_id = ? AND is_read = 0",
+            (user_id,),
+        ).fetchone()
+        return int(row["cnt"] if row else 0)
+    except sqlite3.OperationalError as e:
+        logging.warning("count_unread_notifications schema error: %s", e)
+        return 0
 
 # ==============================
 # المسارات الأساسية (المستخدم)
