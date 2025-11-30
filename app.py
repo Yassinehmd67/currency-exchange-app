@@ -52,7 +52,10 @@ TELEGRAM_API_URL = (
 )
 
 # رابط المنصة (للاستخدام داخل البوت)
-SITE_PUBLIC_URL = os.getenv("SITE_PUBLIC_URL", "https://mh.onrender.com")
+SITE_PUBLIC_URL = os.getenv(
+    "SITE_PUBLIC_URL",
+    "https://currency-exchange-app-2ymh.onrender.com"  # ✅ تم تحديث الرابط الافتراضي هنا
+)
 
 # ==============================
 # إنشاء التطبيق
