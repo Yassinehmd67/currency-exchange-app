@@ -1623,10 +1623,23 @@ def telegram_webhook():
         if callback_id:
             tg_answer_callback(callback_id)
 
-        if data == "referrals":
+            if data == "referrals":
             ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
+
+            db = get_db()
+            row = db.execute(
+                "SELECT referral_credits_usd FROM telegram_users WHERE telegram_id = ?",
+                (tg_id,),
+            ).fetchone()
+            referral_credits = (
+                float(row["referral_credits_usd"])
+                if row and row["referral_credits_usd"] is not None
+                else 0.0
+            )
+
             msg = (
                 "👥 <b>نظام الإحالات</b>\n\n"
+                f"رصيد مكافآت الإحالة الخاص بك: <b>{referral_credits:.2f}$</b>\n\n"
                 "هذا هو رابط الإحالة الخاص بك:\n"
                 f"{ref_link}\n\n"
                 "أي مستخدم يفتح البوت لأول مرة عبر هذا الرابط "
