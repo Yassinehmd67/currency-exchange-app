@@ -1550,7 +1550,9 @@ def telegram_webhook():
     if not update:
         return "no update", 200
 
+    # =========================
     # رسالة نصية عادية
+    # =========================
     if "message" in update:
         message = update["message"]
         text = message.get("text", "") or ""
@@ -1610,7 +1612,9 @@ def telegram_webhook():
         )
         return "ok", 200
 
+    # =========================
     # الضغط على زر Inline (callback_query)
+    # =========================
     if "callback_query" in update:
         cq = update["callback_query"]
         data = cq.get("data")
@@ -1623,19 +1627,24 @@ def telegram_webhook():
         if callback_id:
             tg_answer_callback(callback_id)
 
-            if data == "referrals":
+        # --- زر الإحالات ---
+        if data == "referrals":
             ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
 
             db = get_db()
-            row = db.execute(
-                "SELECT referral_credits_usd FROM telegram_users WHERE telegram_id = ?",
-                (tg_id,),
-            ).fetchone()
-            referral_credits = (
-                float(row["referral_credits_usd"])
-                if row and row["referral_credits_usd"] is not None
-                else 0.0
-            )
+            try:
+                row = db.execute(
+                    "SELECT referral_credits_usd FROM telegram_users WHERE telegram_id = ?",
+                    (tg_id,),
+                ).fetchone()
+                referral_credits = (
+                    float(row["referral_credits_usd"])
+                    if row and row["referral_credits_usd"] is not None
+                    else 0.0
+                )
+            except sqlite3.OperationalError:
+                # في حالة أن عمود referral_credits_usd غير موجود بعد
+                referral_credits = 0.0
 
             msg = (
                 "👥 <b>نظام الإحالات</b>\n\n"
@@ -1648,6 +1657,7 @@ def telegram_webhook():
             tg_send_message(chat_id, msg)
             return "ok", 200
 
+        # --- زر الخدمات الفرعية ---
         if data == "services":
             msg = (
                 "🧰 <b>الخدمات الفرعية</b>\n\n"
@@ -1663,7 +1673,6 @@ def telegram_webhook():
 
     # أنواع أخرى من التحديثات نتجاهلها الآن
     return "ok", 200
-
 
 # إنشاء حساب أدمن تلقائي عند التشغيل الأول (Render)
 def ensure_admin():
