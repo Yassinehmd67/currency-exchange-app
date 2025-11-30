@@ -46,6 +46,7 @@
     "secure_payment_on_binance": "الدفع على صفحة Binance الآمنة",
     "pay_with_binance_pay": "ادفع عبر Binance Pay",
     "after_payment_note": "بعد الدفع ستعود تلقائيًا للموقع، وسيُضاف الرصيد بالدولار (USDT≈USD، وBTC يُحوّل بسعر لحظي).",
+    "binance_uid_note": "هذا هو UID الخاص بنا في Binance Pay لاستقبال USDT:",
     "enter_valid_amount": "يرجى إدخال مبلغ صحيح (> 0)",
     "creating_order": "جاري إنشاء الطلب...",
     "binance_create_failed": "تعذر إنشاء طلب Binance Pay.",
@@ -91,7 +92,7 @@
     "processed_by": "تمت المعالجة بواسطة",
     "processed_at": "وقت المعالجة",
 
-"about_app": "معلومات حول التطبيق",
+    "about_app": "معلومات حول التطبيق",
     "about_app_points": [
       "الشحن سيكون أوتوماتيكيًا بـ USDT/BTC أو يدويًا عبر USDT بعد التحقق من المبلغ ورقم العملية (TxID).",
       "أقل مبلغ للشحن هو 10 دولار ($10).",
@@ -170,6 +171,7 @@
     "secure_payment_on_binance": "Secure payment on Binance",
     "pay_with_binance_pay": "Pay with Binance Pay",
     "after_payment_note": "After payment you'll return here and the USD balance will be credited (USDT≈USD; BTC uses spot rate).",
+    "binance_uid_note": "This is our Binance Pay UID to receive USDT:",
     "enter_valid_amount": "Please enter a valid amount (> 0)",
     "creating_order": "Creating order...",
     "binance_create_failed": "Failed to create Binance Pay order.",
@@ -215,7 +217,7 @@
     "processed_by": "Processed by",
     "processed_at": "Processed at",
 
-"about_app": "About the Application",
+    "about_app": "About the Application",
     "about_app_points": [
       "Top-up can be done automatically with USDT/BTC or manually via USDT after verifying the amount and TxID.",
       "The minimum top-up amount is 10 USD ($10).",
@@ -228,7 +230,7 @@
       "All balances are managed with integrity and transparency, based only on verified data provided by the user.",
       "Reading and understanding this information is essential and is considered an implicit agreement that governs all activities inside the platform."
     ],
-    
+
     "tx_withdraw": "📤 Withdraw request",
     "tx_convert": "🔁 Balance conversion",
     "tx_deposit_binance": "💳 Binance Pay deposit",

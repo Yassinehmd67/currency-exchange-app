@@ -6,6 +6,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>{{ t('support') }}</title>
+
   <style>
     body{
       font-family:system-ui,"Cairo",sans-serif;
@@ -54,9 +55,36 @@
       gap:10px;
     }
     .icon{font-size:28px}
+
+    /* زر تلجرام عائم */
+    .floating-telegram{
+      position:fixed;
+      bottom:20px;
+      left:20px;   /* أسفل يسار */
+      background:#0088cc;
+      width:58px;
+      height:58px;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      border-radius:50%;
+      box-shadow:0 4px 12px rgba(0,0,0,.25);
+      z-index:999;
+      cursor:pointer;
+      transition:.2s ease;
+    }
+    .floating-telegram:hover{
+      background:#0099dd;
+      transform:scale(1.1);
+    }
+    .floating-telegram img{
+      width:34px;
+      height:34px;
+    }
   </style>
 </head>
 <body>
+
 <header>
   <div>
     <a href="{{ url_for('index') }}">🏠 {{ t('home') }}</a>
@@ -70,6 +98,7 @@
   <h1>🆘 {{ t('support') }}</h1>
   <p>{{ t('contact_via') }}:</p>
 
+  <!-- ❗ نترك المحتوى كما هو بدون أي تعديل -->
   <div class="contact-list">
     <div class="contact-item">
       <a href="https://wa.me/212721924217" target="_blank">
@@ -83,5 +112,11 @@
     </div>
   </div>
 </main>
+
+<!-- ✅ فقط إضافة أيقونة البوت الجديدة -->
+<a href="https://t.me/Currencyexchangedh_bot" target="_blank" class="floating-telegram">
+  <img src="https://cdn-icons-png.flaticon.com/512/2111/2111646.png" alt="Telegram">
+</a>
+
 </body>
 </html>

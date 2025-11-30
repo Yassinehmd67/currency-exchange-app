@@ -2,6 +2,7 @@ import os
 import json
 import sqlite3
 import logging
+import requests  # لإرسال طلبات إلى Telegram Bot API
 from datetime import datetime
 from decimal import Decimal, ROUND_DOWN
 
@@ -41,6 +42,17 @@ BINANCE_AUTO_100_URL = os.getenv("BINANCE_AUTO_100_URL", "").strip()
 if not BINANCE_AUTO_100_URL:
     # fallback ثابت لو ما كانش موجود في .env
     BINANCE_AUTO_100_URL = "https://s.binance.com/nLrZHHvJ"
+
+# إعدادات بوت تيليجرام
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_API_URL = (
+    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    if TELEGRAM_BOT_TOKEN
+    else None
+)
+
+# رابط المنصة (للاستخدام داخل البوت)
+SITE_PUBLIC_URL = os.getenv("SITE_PUBLIC_URL", "https://mh.onrender.com")
 
 # ==============================
 # إنشاء التطبيق
@@ -202,6 +214,16 @@ def init_db():
             ref_type TEXT,
             ref_id INTEGER,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS telegram_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_id INTEGER UNIQUE NOT NULL,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            referred_by_telegram_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         """
     )
@@ -494,6 +516,106 @@ def count_unread_notifications(user_id: int) -> int:
     except sqlite3.OperationalError as e:
         logging.warning("count_unread_notifications schema error: %s", e)
         return 0
+
+
+# ==============================
+# دوال خاصة ببوت تيليجرام
+# ==============================
+def register_telegram_user(from_user, start_param=None):
+    """
+    يسجّل/يحدّث مستخدم تلجرام في جدول telegram_users.
+    start_param قد تحتوي على كود الإحالة: مثال 'ref_123456789'
+    ترجع telegram_id أو 0 لو فشل.
+    """
+    if not from_user:
+        return 0
+
+    tg_id = from_user.get("id")
+    if not tg_id:
+        return 0
+
+    username = from_user.get("username")
+    first_name = from_user.get("first_name")
+    last_name = from_user.get("last_name")
+
+    referred_by = None
+    if start_param and start_param.startswith("ref_"):
+        try:
+            referred_by = int(start_param.split("ref_")[1])
+        except ValueError:
+            referred_by = None
+
+    db = get_db()
+    cur = db.cursor()
+
+    row = cur.execute(
+        "SELECT * FROM telegram_users WHERE telegram_id = ?",
+        (tg_id,),
+    ).fetchone()
+
+    if row is None:
+        # مستخدم جديد
+        cur.execute(
+            """
+            INSERT INTO telegram_users
+                (telegram_id, username, first_name, last_name, referred_by_telegram_id)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (tg_id, username, first_name, last_name, referred_by),
+        )
+        db.commit()
+    else:
+        # تحديث بيانات الاسم/اليوزر إذا تغيّرت
+        if (
+            row["username"] != username
+            or row["first_name"] != first_name
+            or row["last_name"] != last_name
+        ):
+            cur.execute(
+                """
+                UPDATE telegram_users
+                SET username = ?, first_name = ?, last_name = ?
+                WHERE telegram_id = ?
+                """,
+                (username, first_name, last_name, tg_id),
+            )
+            db.commit()
+
+    return tg_id
+
+
+def tg_send_message(chat_id, text, reply_markup=None):
+    """إرسال رسالة نصية بسيطة عبر Telegram API."""
+    if not TELEGRAM_API_URL or not TELEGRAM_BOT_TOKEN:
+        logging.warning("Telegram bot token not configured.")
+        return
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+    }
+    if reply_markup:
+        payload["reply_markup"] = json.dumps(reply_markup, ensure_ascii=False)
+
+    try:
+        requests.post(f"{TELEGRAM_API_URL}/sendMessage", data=payload, timeout=10)
+    except Exception as e:
+        logging.error(f"Error sending Telegram message: {e}")
+
+
+def tg_answer_callback(callback_id):
+    """إزالة حالة الـ Loading عند الضغط على الأزرار المضمنة."""
+    if not TELEGRAM_API_URL or not TELEGRAM_BOT_TOKEN:
+        return
+    try:
+        requests.post(
+            f"{TELEGRAM_API_URL}/answerCallbackQuery",
+            data={"callback_query_id": callback_id},
+            timeout=10,
+        )
+    except Exception as e:
+        logging.error(f"Error answering callback: {e}")
 
 
 # ==============================
@@ -1402,6 +1524,129 @@ def about():
 @app.route("/support")
 def support():
     return render_template("support.html")
+
+
+# ==============================
+# Webhook الخاص ببوت تيليجرام
+# ==============================
+@app.route("/telegram/webhook", methods=["POST"])
+def telegram_webhook():
+    """
+    هذا هو Webhook الذي سيستقبل رسائل البوت من Telegram.
+    ضعه في BotFather:
+      https://YOUR_DOMAIN/telegram/webhook
+    """
+    if not TELEGRAM_BOT_TOKEN:
+        return "Bot token not configured", 200
+
+    try:
+        update = request.get_json(force=True)
+    except Exception:
+        return "invalid json", 400
+
+    if not update:
+        return "no update", 200
+
+    # رسالة نصية عادية
+    if "message" in update:
+        message = update["message"]
+        text = message.get("text", "") or ""
+        chat_id = message["chat"]["id"]
+        from_user = message.get("from", {})
+
+        # بارامتر start (لإحالات) يأتي من الأمر /start param
+        start_param = None
+        if text.startswith("/start") and " " in text:
+            start_param = text.split(" ", 1)[1].strip()
+
+        register_telegram_user(from_user, start_param)
+
+        # /start
+        if text.startswith("/start"):
+            tg_id = from_user.get("id")
+            ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
+
+            welcome_text = (
+                "👋 أهلاً بك في بوت المنصة.\n\n"
+                "يمكنك من هنا الدخول إلى المنصة، استخدام نظام الإحالات، "
+                "أو الوصول إلى بعض الخدمات الفرعية.\n\n"
+                "🔗 رابط المنصة:\n"
+                f"{SITE_PUBLIC_URL}"
+            )
+
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": "🌐 المنصة / Platform",
+                            "url": SITE_PUBLIC_URL,
+                        }
+                    ],
+                    [
+                        {
+                            "text": "👥 نظام الإحالات / Referrals",
+                            "callback_data": "referrals",
+                        }
+                    ],
+                    [
+                        {
+                            "text": "🧰 الخدمات الفرعية / Services",
+                            "callback_data": "services",
+                        }
+                    ],
+                ]
+            }
+
+            tg_send_message(chat_id, welcome_text, reply_markup=keyboard)
+            return "ok", 200
+
+        # أي رسالة أخرى حاليًا
+        tg_send_message(
+            chat_id,
+            "استخدم الأمر /start للحصول على القائمة الرئيسية للبوت.",
+        )
+        return "ok", 200
+
+    # الضغط على زر Inline (callback_query)
+    if "callback_query" in update:
+        cq = update["callback_query"]
+        data = cq.get("data")
+        chat_id = cq["message"]["chat"]["id"]
+        from_user = cq.get("from", {})
+        tg_id = from_user.get("id")
+        callback_id = cq.get("id")
+
+        # إزالة الـ Loading
+        if callback_id:
+            tg_answer_callback(callback_id)
+
+        if data == "referrals":
+            ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
+            msg = (
+                "👥 <b>نظام الإحالات</b>\n\n"
+                "هذا هو رابط الإحالة الخاص بك:\n"
+                f"{ref_link}\n\n"
+                "أي مستخدم يفتح البوت لأول مرة عبر هذا الرابط "
+                "سيُسجَّل كإحالة مرتبطة بحسابك في البوت."
+            )
+            tg_send_message(chat_id, msg)
+            return "ok", 200
+
+        if data == "services":
+            msg = (
+                "🧰 <b>الخدمات الفرعية</b>\n\n"
+                "سيتم هنا لاحقًا إضافة أزرار لخدمات إضافية "
+                "مثل: أسعار الصرف، شروحات، أو أدوات أخرى مرتبطة بالمنصة."
+            )
+            tg_send_message(chat_id, msg)
+            return "ok", 200
+
+        # أي callback غير معروف
+        tg_send_message(chat_id, "الخيار غير معروف حالياً.")
+        return "ok", 200
+
+    # أنواع أخرى من التحديثات نتجاهلها الآن
+    return "ok", 200
 
 
 # إنشاء حساب أدمن تلقائي عند التشغيل الأول (Render)

@@ -307,7 +307,8 @@
     <!-- شبك Binance + التحويل + السحب -->
     <div class="two-cols">
 
-        <!-- شحن عبر Binance UID -->
+<!-- شحن عبر Binance UID -->
+    <!-- شحن عبر Binance UID -->
 <div class="card">
     <h3 class="section-title">
         {% if session.get('lang') == 'en' %}
@@ -319,9 +320,9 @@
 
     <div class="note">
         {% if session.get('lang') == 'en' %}
-UID (Binance Pay) to send USDT:
+This is our Binance Pay UID to receive USDT:
         {% else %}
-هذا هو UID الخاص بك في Binance Pay لاستقبال USDT:
+هذا هو UID الخاص بنا في Binance Pay لاستقبال USDT:
         {% endif %}
         <br><strong>{{ binance_uid }}</strong>
     </div>
@@ -338,7 +339,6 @@ UID (Binance Pay) to send USDT:
         {% endif %}
     </div>
 
-    {# ⭐ خيار الشحن الأوتوماتيكي 100 USDT عبر رابط Binance Pay #}
     {% if binance_auto_100_url %}
       <div class="note">
         {% if session.get('lang') == 'en' %}
@@ -398,8 +398,7 @@ Top-up will be reviewed manually, then the balance will be added to your account
         {% endif %}
     </div>
 </div>
-
-        <!-- طلب السحب -->
+<!-- طلب السحب -->
         <div class="card">
             <h3 class="section-title">
                 {% if session.get('lang') == 'en' %}
