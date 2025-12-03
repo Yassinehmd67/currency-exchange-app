@@ -263,6 +263,9 @@
     <a href="{{ url_for('about') }}">ℹ️ {% if session.get('lang') == 'en' %}About{% else %}حول التطبيق{% endif %}</a>
     <a href="{{ url_for('support') }}">🆘 {% if session.get('lang') == 'en' %}Support{% else %}الدعم{% endif %}</a>
     <a href="{{ url_for('logout') }}">🔓 {% if session.get('lang') == 'en' %}Logout{% else %}تسجيل الخروج{% endif %}</a>
+    <a href="{{ url_for('link_telegram') }}">
+    🔗 {% if session.get('lang') == 'en' %}Link Telegram{% else %}ربط تيليجرام{% endif %}
+</a>
 </div>
 </div>
 

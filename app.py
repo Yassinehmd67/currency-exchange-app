@@ -2,12 +2,25 @@ import os
 import json
 import sqlite3
 import logging
-import requests  # لإرسال طلبات إلى Telegram Bot API
-from datetime import datetime
+import hashlib
+import requests  # Telegram Bot API
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 
 import csv
 import io
+
+# ✅ (NEW) for link code generation
+import secrets
+import string
+
+# ===== Postgres (Neon) Support =====
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except Exception:
+    psycopg2 = None
+    RealDictCursor = None
 
 from flask import (
     Flask,
@@ -37,10 +50,13 @@ SECRET_KEY = os.getenv("SECRET_KEY", "changeme")
 DB_PATH = os.getenv("DB_PATH", "database_v2.db")
 BINANCE_UID = os.getenv("BINANCE_UID", "YOUR_BINANCE_UID_HERE")
 
+# Neon / Postgres
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+USE_POSTGRES = bool(DATABASE_URL)
+
 # رابط الشحن الأوتوماتيكي 100 USDT
 BINANCE_AUTO_100_URL = os.getenv("BINANCE_AUTO_100_URL", "").strip()
 if not BINANCE_AUTO_100_URL:
-    # fallback ثابت لو ما كانش موجود في .env
     BINANCE_AUTO_100_URL = "https://s.binance.com/nLrZHHvJ"
 
 # إعدادات بوت تيليجرام
@@ -54,8 +70,15 @@ TELEGRAM_API_URL = (
 # رابط المنصة (للاستخدام داخل البوت)
 SITE_PUBLIC_URL = os.getenv(
     "SITE_PUBLIC_URL",
-    "https://currency-exchange-app-2ymh.onrender.com"  # ✅ تم تحديث الرابط الافتراضي هنا
+    "https://currency-exchange-app-2ymh.onrender.com"
 )
+
+# مكافآت الإحالات (Telegram)
+REF_L1_BONUS_USD = float(os.getenv("REF_L1_BONUS_USD", "0.01"))   # مباشر
+REF_L2_BONUS_USD = float(os.getenv("REF_L2_BONUS_USD", "0.003"))  # غير مباشر مستوى واحد فقط
+
+# ✅ (NEW) تحويل تلقائي عندما يصل رصيد الإحالات 1$
+REF_AUTO_CASHOUT_THRESHOLD = float(os.getenv("REF_AUTO_CASHOUT_THRESHOLD", "1.0"))
 
 # ==============================
 # إنشاء التطبيق
@@ -76,13 +99,6 @@ except FileNotFoundError:
 
 
 def translate(key, lang=None):
-    """
-    استخدام داخل القوالب:
-      {{ t('home') }}
-
-    يرجع النص حسب اللغة الحالية في session['lang']،
-    وإذا لم يجد المفتاح يرجع نفس الـ key.
-    """
     if lang is None:
         lang = session.get("lang", "ar")
     lang_map = TRANSLATIONS.get(lang, {})
@@ -91,10 +107,6 @@ def translate(key, lang=None):
 
 @app.context_processor
 def inject_t():
-    """
-    يجعل الدالة t متاحة في جميع القوالب:
-      {{ t('some_key') }}
-    """
     return {"t": translate}
 
 
@@ -123,15 +135,71 @@ CURRENCY_TO_COUNTRY = {
 }
 
 # ==============================
+# أدوات SQL مشتركة
+# ==============================
+def _sql(sql: str) -> str:
+    """تحويل placeholders من ? إلى %s عند Postgres."""
+    return sql.replace("?", "%s") if USE_POSTGRES else sql
+
+
+class PGConnectionWrapper:
+    """
+    Wrapper ليتصرف psycopg2 مثل sqlite:
+      db.execute(...).fetchone()
+      db.execute(...).fetchall()
+      db.commit()
+    """
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=None):
+        cur = self._conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(_sql(sql), params or ())
+        return cur
+
+    def cursor(self):
+        return self._conn.cursor(cursor_factory=RealDictCursor)
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()    
+
+    def close(self):
+        return self._conn.close()
+
+
+# ==============================
 # دوال التعامل مع قاعدة البيانات
 # ==============================
 def get_db():
-    """إرجاع اتصال SQLite مخزَّن في g لكل طلب."""
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
+        if USE_POSTGRES:
+            if psycopg2 is None:
+                raise RuntimeError(
+                    "psycopg2 is not installed. Add psycopg2-binary to requirements.txt"
+                )
+            g.db = PGConnectionWrapper(psycopg2.connect(DATABASE_URL))
+        else:
+            g.db = sqlite3.connect(DB_PATH)
+            g.db.row_factory = sqlite3.Row
     return g.db
 
+# ==============================
+# Helpers: Postgres column check
+# ==============================
+def _pg_column_exists(cur, table_name: str, column_name: str) -> bool:
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = %s AND column_name = %s
+        LIMIT 1
+        """,
+        (table_name, column_name),
+    )
+    return cur.fetchone() is not None
 
 @app.teardown_appcontext
 def close_db(exc):
@@ -141,102 +209,146 @@ def close_db(exc):
 
 
 def init_db():
-    db = sqlite3.connect(DB_PATH)
-    db.row_factory = sqlite3.Row
-    cur = db.cursor()
+    # ===== Postgres schema (Neon) =====
+    if USE_POSTGRES:
+        if psycopg2 is None:
+            raise RuntimeError(
+                "psycopg2 is not installed. Add psycopg2-binary to requirements.txt"
+            )
 
-    cur.executescript(
-        """
-        PRAGMA foreign_keys = ON;
+        db = psycopg2.connect(DATABASE_URL)
+        cur = db.cursor()
 
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id BIGSERIAL PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
             email TEXT,
             phone TEXT,
             password_hash TEXT NOT NULL,
-            is_admin INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            is_admin BOOLEAN DEFAULT FALSE,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
         );
+        """)
 
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS balances (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             currency TEXT NOT NULL,
-            amount REAL NOT NULL DEFAULT 0,
-            UNIQUE(user_id, currency),
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            UNIQUE(user_id, currency)
         );
+        """)
 
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             type TEXT NOT NULL,
-            amount REAL NOT NULL,
+            amount DOUBLE PRECISION NOT NULL,
             currency TEXT,
             details TEXT,
-            timestamp TEXT NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            timestamp TEXT NOT NULL
         );
+        """)
 
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS pending_deposits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            amount REAL NOT NULL,
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            amount DOUBLE PRECISION NOT NULL,
             fiat_currency TEXT NOT NULL,
             pay_method TEXT,
             status TEXT DEFAULT 'pending',
             txid TEXT,
             timestamp TEXT NOT NULL,
             processed_by TEXT,
-            processed_at TEXT,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            processed_at TEXT
         );
+        """)
 
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS pending_withdrawals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            amount REAL NOT NULL,
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            amount DOUBLE PRECISION NOT NULL,
             currency TEXT NOT NULL,
             payout_info TEXT,
             status TEXT DEFAULT 'pending',
             timestamp TEXT NOT NULL,
             processed_by TEXT,
-            processed_at TEXT,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            processed_at TEXT
         );
+        """)
 
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS notifications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             title TEXT NOT NULL,
             body TEXT NOT NULL,
             type TEXT,
             is_read INTEGER DEFAULT 0,
             created_at TEXT NOT NULL,
             ref_type TEXT,
-            ref_id INTEGER,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ref_id BIGINT
         );
+        """)
 
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS telegram_users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            telegram_id INTEGER UNIQUE NOT NULL,
+            id BIGSERIAL PRIMARY KEY,
+            telegram_id BIGINT UNIQUE NOT NULL,
             username TEXT,
             first_name TEXT,
             last_name TEXT,
-            referred_by_telegram_id INTEGER,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            referred_by_telegram_id BIGINT,
+            referral_credits_usd DOUBLE PRECISION DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
         );
-        """
-    )
+        """)
 
-    # ==== ترقية الجداول لو كانت قديمة (على DB موجودة من قبل) ====
+    # ✅ (NEW) platform ↔ telegram linking (Postgres upgrades)
+        # 1) telegram_users: أعمدة الربط
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS linked_at TEXT;")
 
-    # ترقية جدول pending_deposits
-    cols_dep = {
-        c["name"] for c in cur.execute("PRAGMA table_info(pending_deposits)").fetchall()
-    }
+        # 2) telegram_link_codes: إنشاء الجدول إن لم يوجد (سكيما جديدة)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_link_codes (
+            id BIGSERIAL PRIMARY KEY,
+            platform_user_id BIGINT,
+            user_id BIGINT,
+            code TEXT,
+            expires_at TEXT,
+            used_at TEXT,
+            used_by_telegram_id BIGINT
+        );
+        """)
+
+        # 3) ترقية إن كان موجود بسكيما قديمة
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS user_id BIGINT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code TEXT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS expires_at TEXT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS used_at TEXT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS used_by_telegram_id BIGINT;")
+
+        # 4) قيود/فهارس
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tlc_code ON telegram_link_codes(code);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_platform_user_id ON telegram_link_codes(platform_user_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_user_id ON telegram_link_codes(user_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_expires_at ON telegram_link_codes(expires_at);")
+
+        db.commit()
+        db.close()
+        return    
+
+    # ==== ترقية الجداول لو كانت قديمة ====
+
+    # pending_deposits
+    cols_dep = {c["name"] for c in cur.execute("PRAGMA table_info(pending_deposits)").fetchall()}
     if "status" not in cols_dep:
         cur.execute("ALTER TABLE pending_deposits ADD COLUMN status TEXT DEFAULT 'pending'")
     if "processed_by" not in cols_dep:
@@ -244,10 +356,8 @@ def init_db():
     if "processed_at" not in cols_dep:
         cur.execute("ALTER TABLE pending_deposits ADD COLUMN processed_at TEXT")
 
-    # ترقية جدول pending_withdrawals
-    cols_w = {
-        c["name"] for c in cur.execute("PRAGMA table_info(pending_withdrawals)").fetchall()
-    }
+    # pending_withdrawals
+    cols_w = {c["name"] for c in cur.execute("PRAGMA table_info(pending_withdrawals)").fetchall()}
     if "status" not in cols_w:
         cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN status TEXT DEFAULT 'pending'")
     if "processed_by" not in cols_w:
@@ -255,12 +365,9 @@ def init_db():
     if "processed_at" not in cols_w:
         cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_at TEXT")
 
-    # ترقية جدول notifications
-    cols_not = {
-        c["name"] for c in cur.execute("PRAGMA table_info(notifications)").fetchall()
-    }
+    # notifications
+    cols_not = {c["name"] for c in cur.execute("PRAGMA table_info(notifications)").fetchall()}
 
-    # body
     if "body" not in cols_not:
         cur.execute("ALTER TABLE notifications ADD COLUMN body TEXT")
         if "message" in cols_not:
@@ -269,23 +376,43 @@ def init_db():
             except Exception:
                 pass
 
-    # type
     if "type" not in cols_not:
         cur.execute("ALTER TABLE notifications ADD COLUMN type TEXT")
 
-    # is_read
     if "is_read" not in cols_not:
         cur.execute("ALTER TABLE notifications ADD COLUMN is_read INTEGER DEFAULT 0")
 
-    # created_at
     if "created_at" not in cols_not:
         cur.execute("ALTER TABLE notifications ADD COLUMN created_at TEXT")
 
-    # ref_type / ref_id
     if "ref_type" not in cols_not:
         cur.execute("ALTER TABLE notifications ADD COLUMN ref_type TEXT")
     if "ref_id" not in cols_not:
         cur.execute("ALTER TABLE notifications ADD COLUMN ref_id INTEGER")
+
+    # telegram_users: add referral_credits_usd
+    cols_tg = {c["name"] for c in cur.execute("PRAGMA table_info(telegram_users)").fetchall()}
+    if "referral_credits_usd" not in cols_tg:
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN referral_credits_usd REAL DEFAULT 0")
+
+    # ✅ (NEW) telegram_users: add platform_user_id + linked_at
+    cols_tg = {c["name"] for c in cur.execute("PRAGMA table_info(telegram_users)").fetchall()}
+    if "platform_user_id" not in cols_tg:
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN platform_user_id INTEGER")
+    if "linked_at" not in cols_tg:
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN linked_at TEXT")
+
+    # ✅ (NEW) telegram_link_codes table
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_link_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform_user_id INTEGER NOT NULL,
+            code TEXT UNIQUE NOT NULL,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            used_by_telegram_id INTEGER
+        );
+    """)
 
     db.commit()
     db.close()
@@ -298,47 +425,62 @@ def ensure_default_admin():
     - password: Admin123!  (غيّره بعد أول دخول)
     - balance: 1000 USD
     """
-    db = sqlite3.connect(DB_PATH)
-    db.row_factory = sqlite3.Row
-    cur = db.cursor()
+    # نستخدم اتصال مباشر لأن هذه الدالة تُستدعى عند تحميل الملف
+    if USE_POSTGRES:
+        if psycopg2 is None:
+            raise RuntimeError("psycopg2 missing. Add psycopg2-binary to requirements.txt")
+        db = PGConnectionWrapper(psycopg2.connect(DATABASE_URL))
+    else:
+        db = sqlite3.connect(DB_PATH)
+        db.row_factory = sqlite3.Row
 
-    cur.execute("SELECT id FROM users WHERE username = ?", ("admin",))
-    row = cur.fetchone()
+    row = db.execute(_sql("SELECT id FROM users WHERE username = ?"), ("admin",)).fetchone()
     if row:
         db.close()
-        return  # الأدمن موجود مسبقًا
+        return
 
     password_hash = generate_password_hash("Admin123!")
 
-    # إنشاء المستخدم كأدمن
-    cur.execute(
-        """
-        INSERT INTO users (username, email, phone, password_hash, is_admin)
-        VALUES (?, ?, ?, ?, 1)
-        """,
-        ("admin", "admin@example.com", "", password_hash),
-    )
-    admin_id = cur.lastrowid
+    if USE_POSTGRES:
+        admin_id = db.execute(
+            _sql("""
+                INSERT INTO users (username, email, phone, password_hash, is_admin)
+                VALUES (?, ?, ?, ?, TRUE)
+                RETURNING id
+            """),
+            ("admin", "admin@example.com", "", password_hash),
+        ).fetchone()["id"]
+    else:
+        cur = db.execute(
+            """
+            INSERT INTO users (username, email, phone, password_hash, is_admin)
+            VALUES (?, ?, ?, ?, 1)
+            """,
+            ("admin", "admin@example.com", "", password_hash),
+        )
+        admin_id = cur.lastrowid
 
     # إنشاء أرصدة 0 لكل العملات
     for c in CURRENCIES:
-        cur.execute(
-            "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, ?)",
-            (admin_id, c, 0.0),
+        db.execute(
+            _sql("INSERT INTO balances (user_id, currency, amount) VALUES (?, ?, 0) ON CONFLICT DO NOTHING")
+            if USE_POSTGRES
+            else "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, 0)",
+            (admin_id, c),
         )
 
     # شحن 1000 USD
-    cur.execute(
-        "UPDATE balances SET amount = amount + ? WHERE user_id = ? AND currency = ?",
+    db.execute(
+        _sql("UPDATE balances SET amount = amount + ? WHERE user_id = ? AND currency = ?"),
         (1000.0, admin_id, "USD"),
     )
 
-    # تسجيل العملية في سجلّ المعاملات
-    cur.execute(
-        """
-        INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
+    # تسجيل العملية
+    db.execute(
+        _sql("""
+            INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """),
         (
             admin_id,
             "Initial Admin Balance",
@@ -363,21 +505,33 @@ ensure_default_admin()
 # ==============================
 def create_user(username, email, phone, password_hash, is_admin=False):
     db = get_db()
-    cur = db.cursor()
-    cur.execute(
-        """
-        INSERT INTO users (username, email, phone, password_hash, is_admin)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (username, email, phone, password_hash, 1 if is_admin else 0),
-    )
-    user_id = cur.lastrowid
+
+    if USE_POSTGRES:
+        user_id = db.execute(
+            _sql("""
+                INSERT INTO users (username, email, phone, password_hash, is_admin)
+                VALUES (?, ?, ?, ?, ?)
+                RETURNING id
+            """),
+            (username, email, phone, password_hash, bool(is_admin)),
+        ).fetchone()["id"]
+    else:
+        cur = db.execute(
+            """
+            INSERT INTO users (username, email, phone, password_hash, is_admin)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (username, email, phone, password_hash, 1 if is_admin else 0),
+        )
+        user_id = cur.lastrowid
 
     # إنشاء رصيد 0 لكل عملة
     for c in CURRENCIES:
-        cur.execute(
-            "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, ?)",
-            (user_id, c, 0.0),
+        db.execute(
+            _sql("INSERT INTO balances (user_id, currency, amount) VALUES (?, ?, 0) ON CONFLICT DO NOTHING")
+            if USE_POSTGRES
+            else "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, 0)",
+            (user_id, c),
         )
 
     db.commit()
@@ -385,11 +539,8 @@ def create_user(username, email, phone, password_hash, is_admin=False):
 
 
 def get_user(username):
-    """إرجاع dict يمثل المستخدم مع الأرصدة + المعاملات."""
     db = get_db()
-    row = db.execute(
-        "SELECT * FROM users WHERE username = ?", (username,)
-    ).fetchone()
+    row = db.execute(_sql("SELECT * FROM users WHERE username = ?"), (username,)).fetchone()
     if not row:
         return None
 
@@ -397,7 +548,8 @@ def get_user(username):
 
     # الأرصدة
     balances_rows = db.execute(
-        "SELECT currency, amount FROM balances WHERE user_id = ?", (user_id,)
+        _sql("SELECT currency, amount FROM balances WHERE user_id = ?"),
+        (user_id,),
     ).fetchall()
     balance = {c: 0.0 for c in CURRENCIES}
     for b in balances_rows:
@@ -405,12 +557,12 @@ def get_user(username):
 
     # المعاملات
     tx_rows = db.execute(
-        """
-        SELECT type, amount, currency, details, timestamp
-        FROM transactions
-        WHERE user_id = ?
-        ORDER BY timestamp DESC
-        """,
+        _sql("""
+            SELECT type, amount, currency, details, timestamp
+            FROM transactions
+            WHERE user_id = ?
+            ORDER BY timestamp DESC
+        """),
         (user_id,),
     ).fetchall()
 
@@ -428,8 +580,8 @@ def get_user(username):
     return {
         "id": user_id,
         "username": row["username"],
-        "email": row["email"],
-        "phone": row["phone"],
+        "email": row.get("email") if isinstance(row, dict) else row["email"],
+        "phone": row.get("phone") if isinstance(row, dict) else row["phone"],
         "password_hash": row["password_hash"],
         "is_admin": bool(row["is_admin"]),
         "balance": balance,
@@ -438,14 +590,21 @@ def get_user(username):
 
 
 def change_balance(user_id, currency, delta):
-    """زيادة/إنقاص رصيد عملة معينة للمستخدم."""
     db = get_db()
+
+    if USE_POSTGRES:
+        db.execute(
+            _sql("INSERT INTO balances (user_id, currency, amount) VALUES (?, ?, 0) ON CONFLICT DO NOTHING"),
+            (user_id, currency),
+        )
+    else:
+        db.execute(
+            "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, 0)",
+            (user_id, currency),
+        )
+
     db.execute(
-        "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, 0)",
-        (user_id, currency),
-    )
-    db.execute(
-        "UPDATE balances SET amount = amount + ? WHERE user_id = ? AND currency = ?",
+        _sql("UPDATE balances SET amount = amount + ? WHERE user_id = ? AND currency = ?"),
         (float(delta), user_id, currency),
     )
     db.commit()
@@ -454,10 +613,10 @@ def change_balance(user_id, currency, delta):
 def log_transaction(user_id, tx_type, amount, currency, details=""):
     db = get_db()
     db.execute(
-        """
-        INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
+        _sql("""
+            INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """),
         (
             user_id,
             tx_type,
@@ -474,51 +633,452 @@ def log_transaction(user_id, tx_type, amount, currency, details=""):
 # دوال الإشعارات
 # ==============================
 def create_notification(user_id, kind, title, message, ref_id=None):
-    """
-    kind: نوع الإشعار (مثال: 'deposit_approved', 'deposit_rejected',
-          'withdraw_approved', 'withdraw_rejected' ...)
-    - يتم دائماً إنشاء الإشعار بحالة غير مقروءة is_read = 0
-    - نخزّن kind في عمود type، ونصّ الإشعار في body
-    """
     db = get_db()
     try:
         db.execute(
-            """
-            INSERT INTO notifications
-                (user_id, title, body, type, is_read, created_at, ref_type, ref_id)
-            VALUES
-                (?,      ?,     ?,    ?,    0,       ?,          NULL,    ?)
-            """,
+            _sql("""
+                INSERT INTO notifications
+                    (user_id, title, body, type, is_read, created_at, ref_type, ref_id)
+                VALUES
+                    (?,      ?,     ?,    ?,    0,       ?,          NULL,    ?)
+            """),
             (
                 user_id,
                 title,
                 message,
-                kind,  # نخزّن kind في عمود type
+                kind,
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 ref_id,
             ),
         )
         db.commit()
-    except sqlite3.OperationalError as e:
-        logging.warning("create_notification schema error: %s", e)
+    except Exception as e:
+        logging.warning("create_notification error: %s", e)
 
 
 def count_unread_notifications(user_id: int) -> int:
-    """
-    إرجاع عدد الإشعارات غير المقروءة للمستخدم.
-    لو كان هناك مشكلة في سكيمة قاعدة البيانات على السيرفر
-    لا نُسقط الموقع، بل نعيد 0 ونكتب تحذير في اللوج.
-    """
     db = get_db()
     try:
         row = db.execute(
-            "SELECT COUNT(*) AS cnt FROM notifications WHERE user_id = ? AND is_read = 0",
+            _sql("SELECT COUNT(*) AS cnt FROM notifications WHERE user_id = ? AND is_read = 0"),
             (user_id,),
         ).fetchone()
         return int(row["cnt"] if row else 0)
-    except sqlite3.OperationalError as e:
-        logging.warning("count_unread_notifications schema error: %s", e)
+    except Exception as e:
+        logging.warning("count_unread_notifications error: %s", e)
         return 0
+
+
+# ==============================
+# ✅ (NEW) Platform ↔ Telegram linking helpers
+# ==============================
+LINK_CODE_PREFIX = "LNK-"
+
+def _now_str():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def _future_minutes_str(minutes: int):
+    from datetime import timedelta
+    return (datetime.now() + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
+
+def _generate_link_code(length=8):
+    alphabet = string.ascii_uppercase + string.digits
+    return LINK_CODE_PREFIX + "".join(secrets.choice(alphabet) for _ in range(length))
+
+def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) -> str:
+    db = get_db()
+
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=minutes_valid)).strftime("%Y-%m-%d %H:%M:%S")
+
+    alphabet = string.ascii_uppercase + string.digits
+    attempts = 25
+    last_err = None
+
+    for _ in range(attempts):
+        code = "".join(secrets.choice(alphabet) for _ in range(8))
+        code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+        try:
+            if USE_POSTGRES:
+                # 1) اكتشاف اسم عمود المستخدم (user_id القديم أو platform_user_id الجديد)
+                cur = db.cursor()
+                has_user_id = _pg_column_exists(cur, "telegram_link_codes", "user_id")
+                user_col = "user_id" if has_user_id else "platform_user_id"
+
+                # 2) اكتشاف الأعمدة الموجودة فعلاً (code / code_hash)
+                has_code = _pg_column_exists(cur, "telegram_link_codes", "code")
+                has_code_hash = _pg_column_exists(cur, "telegram_link_codes", "code_hash")
+
+                cols = [user_col, "expires_at"]
+                vals = [platform_user_id, expires_at]
+
+                if has_code:
+                    cols.append("code")
+                    vals.append(code)
+
+                if has_code_hash:
+                    cols.append("code_hash")
+                    vals.append(code_hash)
+
+                cols_sql = ", ".join(cols)
+                ph_sql = ", ".join(["?"] * len(vals))
+
+                # IMPORTANT: بدون target داخل ON CONFLICT حتى يشتغل مع أي unique constraint موجود (code أو code_hash)
+                row = db.execute(
+                    _sql(f"""
+                        INSERT INTO telegram_link_codes ({cols_sql})
+                        VALUES ({ph_sql})
+                        ON CONFLICT DO NOTHING
+                        RETURNING id
+                    """),
+                    tuple(vals),
+                ).fetchone()
+
+                if row:
+                    db.commit()
+                    return code
+
+                db.commit()
+                continue
+
+            # SQLite
+            cur2 = db.execute(
+                """
+                INSERT OR IGNORE INTO telegram_link_codes (platform_user_id, code, expires_at)
+                VALUES (?, ?, ?)
+                """,
+                (platform_user_id, code, expires_at),
+            )
+            db.commit()
+            if cur2.rowcount and cur2.rowcount > 0:
+                return code
+
+        except Exception as e:
+            last_err = str(e)
+            logging.warning("create_telegram_link_code attempt failed: %s", e)
+
+            # Postgres: لازم rollback على الاتصال الحقيقي
+            try:
+                if USE_POSTGRES and hasattr(db, "_conn"):
+                    db._conn.rollback()
+            except Exception:
+                pass
+
+    raise RuntimeError(f"Failed to generate a unique link code. Last error: {last_err}")
+
+def redeem_telegram_link_code(telegram_id: int, code: str):
+    """
+    يحاول ربط Telegram بالمستخدم في المنصة باستخدام code.
+    يرجع: (ok: bool, message: str)
+    """
+    if not telegram_id or not code:
+        return False, "بيانات غير مكتملة."
+
+    code = (code or "").strip().upper()
+    now = datetime.now(timezone.utc)
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
+    db = get_db()
+
+    try:
+        # 1) جلب الكود (غير مستخدم + غير منتهي)
+        row = db.execute(
+            _sql("""
+                SELECT *
+                FROM telegram_link_codes
+                WHERE code = ?
+                LIMIT 1
+            """),
+            (code,),
+        ).fetchone()
+
+        if not row:
+            return False, "❌ الكود غير صحيح."
+
+        # used_at
+        used_at = row.get("used_at") if isinstance(row, dict) else row["used_at"]
+        if used_at:
+            return False, "⚠️ هذا الكود تم استخدامه من قبل."
+
+        # expires_at
+        expires_at_raw = row.get("expires_at") if isinstance(row, dict) else row["expires_at"]
+        try:
+            expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
+        except Exception:
+            # fallback لصيغة strftime
+            expires_at = datetime.strptime(str(expires_at_raw)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+
+        if expires_at < now:
+            return False, "⏳ انتهت صلاحية الكود. ارجع للمنصة وولّد كود جديد."
+
+        # 2) تحديد اسم عمود المستخدم داخل telegram_link_codes (قد يكون user_id أو platform_user_id)
+        platform_user_id = None
+        if USE_POSTGRES:
+            cur = db.cursor()
+            has_user_id = _pg_column_exists(cur, "telegram_link_codes", "user_id")
+            user_col = "user_id" if has_user_id else "platform_user_id"
+            platform_user_id = row.get(user_col) if isinstance(row, dict) else row[user_col]
+        else:
+            # SQLite: نعتمد platform_user_id
+            platform_user_id = row.get("platform_user_id") if isinstance(row, dict) else row["platform_user_id"]
+
+        if not platform_user_id:
+            return False, "❌ خطأ في بيانات الكود (لا يوجد platform_user_id)."
+
+        platform_user_id = int(platform_user_id)
+
+        # 3) تأكد أن هذا المستخدم في المنصة غير مرتبط مسبقًا بتليجرام آخر
+        existing = db.execute(
+            _sql("""
+                SELECT telegram_id
+                FROM telegram_users
+                WHERE platform_user_id = ?
+                LIMIT 1
+            """),
+            (platform_user_id,),
+        ).fetchone()
+
+        if existing:
+            ex_tid = existing.get("telegram_id") if isinstance(existing, dict) else existing["telegram_id"]
+            if ex_tid and int(ex_tid) != int(telegram_id):
+                return False, "⚠️ هذا الحساب في المنصة مرتبط أصلًا بحساب Telegram آخر. قم بإلغاء الربط من المنصة أولًا."
+
+        # 4) تأكد أن مستخدم تيليجرام موجود في telegram_users
+        tg_row = db.execute(
+            _sql("SELECT telegram_id, platform_user_id FROM telegram_users WHERE telegram_id = ?"),
+            (telegram_id,),
+        ).fetchone()
+
+        if not tg_row:
+            # نسجله كحد أدنى (إذا لم يكن مسجلًا من قبل)
+            if USE_POSTGRES:
+                db.execute(
+                    _sql("""
+                        INSERT INTO telegram_users (telegram_id, referral_credits_usd, created_at)
+                        VALUES (?, 0, ?)
+                        ON CONFLICT (telegram_id) DO NOTHING
+                    """),
+                    (telegram_id, now_str),
+                )
+            else:
+                db.execute(
+                    """
+                    INSERT OR IGNORE INTO telegram_users (telegram_id, referral_credits_usd, created_at)
+                    VALUES (?, 0, ?)
+                    """,
+                    (telegram_id, now_str),
+                )
+
+        else:
+            # إذا هذا التيليجرام مرتبط بحساب منصة آخر
+            current_link = tg_row.get("platform_user_id") if isinstance(tg_row, dict) else tg_row["platform_user_id"]
+            if current_link and int(current_link) != platform_user_id:
+                return False, "⚠️ حساب Telegram هذا مرتبط بحساب منصة آخر. قم بإلغاء الربط من المنصة أولًا."
+
+        # 5) تنفيذ الربط
+        db.execute(
+            _sql("""
+                UPDATE telegram_users
+                SET platform_user_id = ?, linked_at = ?
+                WHERE telegram_id = ?
+            """),
+            (platform_user_id, now_str, telegram_id),
+        )
+
+        db.execute(
+            _sql("""
+                UPDATE telegram_link_codes
+                SET used_at = ?, used_by_telegram_id = ?
+                WHERE code = ?
+            """),
+            (now_str, telegram_id, code),
+        )
+
+        db.commit()
+        return True, "✅ تم ربط حساب Telegram بنجاح! يمكنك الرجوع للمنصة الآن."
+
+    except Exception as e:
+        logging.error("redeem_telegram_link_code error: %s", e)
+        try:
+            if USE_POSTGRES:
+                db.rollback()
+        except Exception:
+            pass
+        return False, "❌ حدث خطأ أثناء الربط. حاول مرة أخرى."    
+
+def redeem_telegram_link_code(telegram_id: int, code_raw: str):
+    """
+    يحاول ربط telegram_id بحساب منصة عبر الكود.
+    يرجع (success: bool, info/message: str)
+    - عند النجاح يرجع platform_user_id كنص في info.
+    """
+    if not code_raw:
+        return False, "كود غير صالح."
+
+    code = code_raw.strip().upper()
+    if not code.startswith(LINK_CODE_PREFIX):
+        return False, "صيغة الكود غير صحيحة."
+
+    db = get_db()
+    now = _now_str()
+
+    # تأكد أن هذا التليجرام غير مربوط مسبقاً
+    try:
+        row_tg = db.execute(
+            _sql("SELECT platform_user_id FROM telegram_users WHERE telegram_id = ?"),
+            (telegram_id,),
+        ).fetchone()
+        if row_tg and row_tg.get("platform_user_id"):
+            return False, "هذا الحساب مربوط مسبقاً."
+    except Exception:
+        pass
+
+    # Postgres: UPDATE..RETURNING (آمن ضد الاستخدام المزدوج)
+    if USE_POSTGRES:
+        try:
+            cur = db.execute(
+                _sql("""
+                    UPDATE telegram_link_codes
+                    SET used_at = ?, used_by_telegram_id = ?
+                    WHERE code = ?
+                      AND used_at IS NULL
+                      AND expires_at > ?
+                    RETURNING platform_user_id
+                """),
+                (now, telegram_id, code, now),
+            )
+            r = cur.fetchone()
+            if not r:
+                return False, "الكود غير صحيح أو منتهي أو مستعمل."
+
+            platform_user_id = r["platform_user_id"]
+
+            # اربط في telegram_users
+            db.execute(
+                _sql("""
+                    UPDATE telegram_users
+                    SET platform_user_id = ?, linked_at = ?
+                    WHERE telegram_id = ?
+                """),
+                (platform_user_id, now, telegram_id),
+            )
+            db.commit()
+            return True, str(platform_user_id)
+        except Exception as e:
+            logging.error("redeem_telegram_link_code pg error: %s", e)
+            return False, "حدث خطأ أثناء الربط."
+
+    # SQLite: SELECT ثم UPDATE
+    try:
+        row = db.execute(
+            _sql("""
+                SELECT platform_user_id, expires_at, used_at
+                FROM telegram_link_codes
+                WHERE code = ?
+            """),
+            (code,),
+        ).fetchone()
+
+        if not row:
+            return False, "الكود غير صحيح."
+        if row.get("used_at"):
+            return False, "هذا الكود مستعمل مسبقاً."
+        if row.get("expires_at") <= now:
+            return False, "هذا الكود منتهي."
+
+        platform_user_id = row["platform_user_id"]
+
+        db.execute(
+            _sql("""
+                UPDATE telegram_link_codes
+                SET used_at = ?, used_by_telegram_id = ?
+                WHERE code = ? AND used_at IS NULL
+            """),
+            (now, telegram_id, code),
+        )
+
+        db.execute(
+            _sql("""
+                UPDATE telegram_users
+                SET platform_user_id = ?, linked_at = ?
+                WHERE telegram_id = ?
+            """),
+            (platform_user_id, now, telegram_id),
+        )
+
+        db.commit()
+        return True, str(platform_user_id)
+    except Exception as e:
+        logging.error("redeem_telegram_link_code sqlite error: %s", e)
+        return False, "حدث خطأ أثناء الربط."
+
+
+# ==============================
+# ✅ (NEW) Auto cashout referrals to platform when >= 1$
+# ==============================
+def apply_referral_auto_cashout_for_telegram(telegram_id: int):
+    """
+    إذا كان telegram_id مربوط بحساب منصة:
+    - عند وصول referral_credits_usd إلى >= 1$:
+      ننقل (بالدولار الصحيح: 1,2,3...) إلى رصيد USD في balances
+      ونخصم نفس المبلغ من referral_credits_usd
+    """
+    db = get_db()
+    now = _now_str()
+
+    row = db.execute(
+        _sql("""
+            SELECT telegram_id, platform_user_id, referral_credits_usd
+            FROM telegram_users
+            WHERE telegram_id = ?
+        """),
+        (telegram_id,),
+    ).fetchone()
+    if not row:
+        return
+
+    platform_user_id = row.get("platform_user_id")
+    credits = float(row.get("referral_credits_usd") or 0.0)
+    if not platform_user_id:
+        return
+
+    transferable = int(credits // REF_AUTO_CASHOUT_THRESHOLD)
+    if transferable <= 0:
+        return
+
+    # خصم من رصيد الإحالات
+    db.execute(
+        _sql("""
+            UPDATE telegram_users
+            SET referral_credits_usd = COALESCE(referral_credits_usd, 0) - ?
+            WHERE telegram_id = ?
+        """),
+        (float(transferable), telegram_id),
+    )
+    db.commit()
+
+    # إضافة للمنصة (USD)
+    change_balance(int(platform_user_id), "USD", float(transferable))
+    log_transaction(
+        int(platform_user_id),
+        "Referral Auto Cashout",
+        float(transferable),
+        "USD",
+        details=f"Telegram referral cashout from tg_id={telegram_id}",
+    )
+
+    # إشعار داخل المنصة
+    try:
+        create_notification(
+            int(platform_user_id),
+            "referral_cashout",
+            "تمت إضافة أرباح الإحالة / Referral added",
+            f"تمت إضافة {transferable}$ إلى رصيدك في المنصة من أرباح الإحالة عبر تيليجرام.\n"
+            f"{transferable}$ was added to your platform balance from Telegram referrals.",
+            ref_id=None,
+        )
+    except Exception:
+        pass
 
 
 # ==============================
@@ -526,9 +1086,10 @@ def count_unread_notifications(user_id: int) -> int:
 # ==============================
 def register_telegram_user(from_user, start_param=None):
     """
-    يسجّل/يحدّث مستخدم تلجرام في جدول telegram_users.
-    start_param قد تحتوي على كود الإحالة: مثال 'ref_123456789'
-    ترجع telegram_id أو 0 لو فشل.
+    - يسجّل/يحدّث المستخدم في telegram_users
+    - إذا كان start_param = ref_<tg_id> وسجلنا مستخدم جديد لأول مرة:
+        * نعطي للمُحيل (Level 1) +0.01$
+        * ونعطي لمُحيل المُحيل (Level 2) +0.003$ (مرة واحدة فقط)
     """
     if not from_user:
         return 0
@@ -548,47 +1109,99 @@ def register_telegram_user(from_user, start_param=None):
         except ValueError:
             referred_by = None
 
-    db = get_db()
-    cur = db.cursor()
+    # منع self-referral
+    if referred_by == tg_id:
+        referred_by = None
 
-    row = cur.execute(
-        "SELECT * FROM telegram_users WHERE telegram_id = ?",
+    db = get_db()
+
+    row = db.execute(
+        _sql("SELECT * FROM telegram_users WHERE telegram_id = ?"),
         (tg_id,),
     ).fetchone()
 
     if row is None:
         # مستخدم جديد
-        cur.execute(
-            """
-            INSERT INTO telegram_users
-                (telegram_id, username, first_name, last_name, referred_by_telegram_id)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (tg_id, username, first_name, last_name, referred_by),
-        )
-        db.commit()
+        try:
+            db.execute(
+                _sql("""
+                    INSERT INTO telegram_users
+                        (telegram_id, username, first_name, last_name, referred_by_telegram_id, referral_credits_usd)
+                    VALUES (?, ?, ?, ?, ?, 0)
+                """),
+                (tg_id, username, first_name, last_name, referred_by),
+            )
+
+            lvl2 = None
+
+            # مكافآت الإحالة (فقط عند التسجيل الأول)
+            if referred_by:
+                # Level 1 bonus
+                db.execute(
+                    _sql("""
+                        UPDATE telegram_users
+                        SET referral_credits_usd = COALESCE(referral_credits_usd, 0) + ?
+                        WHERE telegram_id = ?
+                    """),
+                    (REF_L1_BONUS_USD, referred_by),
+                )
+
+                # Level 2 bonus (referrer of referrer)
+                ref_row = db.execute(
+                    _sql("SELECT referred_by_telegram_id FROM telegram_users WHERE telegram_id = ?"),
+                    (referred_by,),
+                ).fetchone()
+                lvl2 = ref_row["referred_by_telegram_id"] if ref_row else None
+                if lvl2:
+                    db.execute(
+                        _sql("""
+                            UPDATE telegram_users
+                            SET referral_credits_usd = COALESCE(referral_credits_usd, 0) + ?
+                            WHERE telegram_id = ?
+                        """),
+                        (REF_L2_BONUS_USD, lvl2),
+                    )
+
+            db.commit()
+
+            # ✅ (NEW) بعد إضافة المكافآت، صرف تلقائي إذا كان الحساب مربوطاً
+            try:
+                if referred_by:
+                    apply_referral_auto_cashout_for_telegram(referred_by)
+                if lvl2:
+                    apply_referral_auto_cashout_for_telegram(lvl2)
+            except Exception:
+                pass
+
+        except Exception as e:
+            logging.error("register_telegram_user insert error: %s", e)
+            return tg_id
+
     else:
         # تحديث بيانات الاسم/اليوزر إذا تغيّرت
-        if (
-            row["username"] != username
-            or row["first_name"] != first_name
-            or row["last_name"] != last_name
-        ):
-            cur.execute(
-                """
-                UPDATE telegram_users
-                SET username = ?, first_name = ?, last_name = ?
-                WHERE telegram_id = ?
-                """,
-                (username, first_name, last_name, tg_id),
+        try:
+            needs_update = (
+                row.get("username") != username
+                or row.get("first_name") != first_name
+                or row.get("last_name") != last_name
             )
-            db.commit()
+            if needs_update:
+                db.execute(
+                    _sql("""
+                        UPDATE telegram_users
+                        SET username = ?, first_name = ?, last_name = ?
+                        WHERE telegram_id = ?
+                    """),
+                    (username, first_name, last_name, tg_id),
+                )
+                db.commit()
+        except Exception as e:
+            logging.error("register_telegram_user update error: %s", e)
 
     return tg_id
 
 
 def tg_send_message(chat_id, text, reply_markup=None):
-    """إرسال رسالة نصية بسيطة عبر Telegram API."""
     if not TELEGRAM_API_URL or not TELEGRAM_BOT_TOKEN:
         logging.warning("Telegram bot token not configured.")
         return
@@ -608,7 +1221,6 @@ def tg_send_message(chat_id, text, reply_markup=None):
 
 
 def tg_answer_callback(callback_id):
-    """إزالة حالة الـ Loading عند الضغط على الأزرار المضمنة."""
     if not TELEGRAM_API_URL or not TELEGRAM_BOT_TOKEN:
         return
     try:
@@ -674,7 +1286,6 @@ def register():
         password = request.form.get("password", "")
         confirm = request.form.get("confirm_password", "")
 
-        # تحقق أساسي من المدخلات
         if not username or not password:
             flash("❌ يجب إدخال اسم مستخدم وكلمة مرور", "error")
             return render_template("register.html")
@@ -683,7 +1294,6 @@ def register():
             flash("❌ كلمتا المرور غير متطابقتين", "error")
             return render_template("register.html")
 
-        # اسم المستخدم موجود؟
         if get_user(username):
             flash("❌ اسم المستخدم موجود بالفعل", "error")
             return render_template("register.html")
@@ -692,7 +1302,7 @@ def register():
 
         try:
             create_user(username, email, phone, hashed_pw, is_admin=False)
-        except sqlite3.IntegrityError:
+        except Exception:
             flash("❌ اسم المستخدم موجود بالفعل", "error")
             return render_template("register.html")
 
@@ -721,7 +1331,6 @@ def convert_currency_route():
     if from_currency not in CURRENCIES or to_currency not in CURRENCIES:
         return jsonify({"success": False, "message": "عملة غير مدعومة"}), 400
 
-    # تحويل المبلغ إلى Decimal
     try:
         amount = Decimal(amount_str)
         if amount <= 0:
@@ -735,36 +1344,21 @@ def convert_currency_route():
         session.clear()
         return jsonify({"success": False, "message": "المستخدم غير موجود"}), 400
 
-    # رصيد العملة المرسِل منها
     current_from_balance = user["balance"].get(from_currency, 0.0)
     if current_from_balance < float(amount):
         return jsonify({"success": False, "message": f"الرصيد غير كافٍ في {from_currency}"}), 400
 
     try:
-        # استخدام الدالة من currency_converter.converter (سعر صرف حقيقي + كاش داخلي)
         converted_raw = convert_currency(amount, from_currency, to_currency)
-        converted_dec = Decimal(str(converted_raw)).quantize(
-            Decimal("0.01"), rounding=ROUND_DOWN
-        )
-
-        # حساب سعر الصرف الفعلي
+        converted_dec = Decimal(str(converted_raw)).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
         rate_dec = (converted_dec / amount).quantize(Decimal("0.0001"))
 
-        # تحديث الأرصدة في قاعدة البيانات
         change_balance(user["id"], from_currency, -float(amount))
         change_balance(user["id"], to_currency, float(converted_dec))
 
-        # تسجيل تحويل واحد فقط (بدون تكرار)
         details = f"{amount} {from_currency} → {converted_dec} {to_currency}"
-        log_transaction(
-            user["id"],
-            "Currency Conversion",
-            float(amount),
-            from_currency,
-            details,
-        )
+        log_transaction(user["id"], "Currency Conversion", float(amount), from_currency, details)
 
-        # جلب الأرصدة الجديدة بعد التحديث
         updated_user = get_user(username)
         balances = updated_user["balance"] if updated_user and "balance" in updated_user else {}
 
@@ -773,25 +1367,19 @@ def convert_currency_route():
                 "success": True,
                 "converted_amount": f"{converted_dec}",
                 "rate": f"{rate_dec:.4f}",
-                "balances": balances,  # لتحديث الواجهة فوراً
+                "balances": balances,
             }
         )
 
     except RuntimeError as e:
-        # مشكلة في مزود أسعار الصرف (API)
         logging.error(f"Currency API error: {e}")
         return jsonify(
-            {
-                "success": False,
-                "message": "تعذر جلب سعر الصرف من مزوّد الأسعار الخارجي، يرجى المحاولة لاحقاً.",
-            }
+            {"success": False, "message": "تعذر جلب سعر الصرف من مزوّد الأسعار الخارجي، يرجى المحاولة لاحقاً."}
         ), 502
 
     except Exception as e:
         logging.error(f"Currency conversion error: {e}")
-        return jsonify(
-            {"success": False, "message": "خطأ أثناء تحويل العملات"}
-        ), 500
+        return jsonify({"success": False, "message": "خطأ أثناء تحويل العملات"}), 500
 
 
 # ==============================
@@ -834,11 +1422,11 @@ def binance_topup():
 
     db = get_db()
     db.execute(
-        """
-        INSERT INTO pending_deposits
-        (user_id, amount, fiat_currency, pay_method, status, txid, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
+        _sql("""
+            INSERT INTO pending_deposits
+            (user_id, amount, fiat_currency, pay_method, status, txid, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """),
         (
             user["id"],
             float(amount),
@@ -851,14 +1439,7 @@ def binance_topup():
     )
     db.commit()
 
-    log_transaction(
-        user["id"],
-        "Binance Topup Request",
-        amount,
-        fiat_currency,
-        details=f"UID={BINANCE_UID}, txid={txid}",
-    )
-
+    log_transaction(user["id"], "Binance Topup Request", amount, fiat_currency, details=f"UID={BINANCE_UID}, txid={txid}")
     flash("✅ تم تسجيل طلب الشحن، سيتم التحقق من التحويل وإضافة الرصيد يدويًا.", "success")
     return redirect(url_for("index"))
 
@@ -875,7 +1456,6 @@ def binance_deposit_proof():
     currency = request.form.get("currency")
     txid = (request.form.get("txid") or "").strip()
 
-    # التحقق من المدخلات
     try:
         amount = Decimal(str(amount_raw))
     except InvalidOperation:
@@ -894,36 +1474,18 @@ def binance_deposit_proof():
         return redirect(url_for("login"))
 
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     db = get_db()
 
-    # ✅ إضافة طلب الشحن إلى جدول pending_deposits ليظهر في لوحة الأدمن
     db.execute(
-        """
-        INSERT INTO pending_deposits
-        (user_id, amount, fiat_currency, pay_method, status, txid, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            user["id"],
-            float(amount),
-            currency,          # تخزين العملة في حقل fiat_currency
-            "Binance Pay",     # طريقة الدفع
-            "pending",         # حالة الطلب المبدئية
-            txid,
-            now_str,
-        ),
+        _sql("""
+            INSERT INTO pending_deposits
+            (user_id, amount, fiat_currency, pay_method, status, txid, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """),
+        (user["id"], float(amount), currency, "Binance Pay", "pending", txid, now_str),
     )
 
-    # تسجيل العملية في سجل المعاملات
-    log_transaction(
-        user["id"],
-        "Binance Deposit Proof",
-        amount,
-        currency,
-        details=f"TXID/Proof: {txid}",
-    )
-
+    log_transaction(user["id"], "Binance Deposit Proof", amount, currency, details=f"TXID/Proof: {txid}")
     db.commit()
 
     flash("✅ تم إرسال إثبات الشحن، سيقوم الأدمن بمراجعته وإضافة الرصيد بعد التحقق.", "success")
@@ -963,17 +1525,15 @@ def withdraw_request():
         flash("❌ الرصيد غير كافٍ", "error")
         return redirect(url_for("index"))
 
-    # خصم الرصيد
     change_balance(user["id"], currency, -float(amount))
 
-    # إضافة إلى جدول طلبات السحب المعلقة
     db = get_db()
     db.execute(
-        """
-        INSERT INTO pending_withdrawals
-        (user_id, amount, currency, payout_info, status, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
+        _sql("""
+            INSERT INTO pending_withdrawals
+            (user_id, amount, currency, payout_info, status, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """),
         (
             user["id"],
             float(amount),
@@ -985,14 +1545,7 @@ def withdraw_request():
     )
     db.commit()
 
-    log_transaction(
-        user["id"],
-        "Withdraw Request",
-        amount,
-        currency,
-        details=f"Payout info: {payout_info}",
-    )
-
+    log_transaction(user["id"], "Withdraw Request", amount, currency, details=f"Payout info: {payout_info}")
     flash("📤 تم إرسال طلب السحب، سيتم معالجته يدويًا.", "success")
     return redirect(url_for("index"))
 
@@ -1001,7 +1554,6 @@ def withdraw_request():
 # أدوات مساعدة للأدمن
 # ==============================
 def _ensure_admin():
-    """تفقد أن المستخدم أدمن وإلا يرجع None."""
     if "username" not in session:
         return None
     user = get_user(session["username"])
@@ -1044,13 +1596,13 @@ def export_transactions_csv():
         where_clause = "WHERE " + " AND ".join(conditions)
 
     rows = db.execute(
-        f"""
-        SELECT u.username, t.type, t.amount, t.currency, t.details, t.timestamp
-        FROM transactions t
-        JOIN users u ON t.user_id = u.id
-        {where_clause}
-        ORDER BY t.timestamp DESC
-        """,
+        _sql(f"""
+            SELECT u.username, t.type, t.amount, t.currency, t.details, t.timestamp
+            FROM transactions t
+            JOIN users u ON t.user_id = u.id
+            {where_clause}
+            ORDER BY t.timestamp DESC
+        """),
         params,
     ).fetchall()
 
@@ -1058,9 +1610,7 @@ def export_transactions_csv():
     writer = csv.writer(output)
     writer.writerow(["username", "type", "amount", "currency", "details", "timestamp"])
     for r in rows:
-        writer.writerow(
-            [r["username"], r["type"], r["amount"], r["currency"], r["details"], r["timestamp"]]
-        )
+        writer.writerow([r["username"], r["type"], r["amount"], r["currency"], r["details"], r["timestamp"]])
 
     csv_data = output.getvalue()
     output.close()
@@ -1068,9 +1618,7 @@ def export_transactions_csv():
     return Response(
         csv_data,
         mimetype="text/csv",
-        headers={
-            "Content-Disposition": "attachment; filename=transactions.csv",
-        },
+        headers={"Content-Disposition": "attachment; filename=transactions.csv"},
     )
 
 
@@ -1081,28 +1629,27 @@ def export_balances_csv():
         abort(403)
 
     db = get_db()
-
     username_f = (request.args.get("username") or "").strip() or None
 
     if username_f:
         rows = db.execute(
-            """
-            SELECT u.username, b.currency, b.amount
-            FROM balances b
-            JOIN users u ON b.user_id = u.id
-            WHERE u.username = ?
-            ORDER BY u.username, b.currency
-            """,
+            _sql("""
+                SELECT u.username, b.currency, b.amount
+                FROM balances b
+                JOIN users u ON b.user_id = u.id
+                WHERE u.username = ?
+                ORDER BY u.username, b.currency
+            """),
             (username_f,),
         ).fetchall()
     else:
         rows = db.execute(
-            """
-            SELECT u.username, b.currency, b.amount
-            FROM balances b
-            JOIN users u ON b.user_id = u.id
-            ORDER BY u.username, b.currency
-            """
+            _sql("""
+                SELECT u.username, b.currency, b.amount
+                FROM balances b
+                JOIN users u ON b.user_id = u.id
+                ORDER BY u.username, b.currency
+            """)
         ).fetchall()
 
     output = io.StringIO()
@@ -1117,9 +1664,7 @@ def export_balances_csv():
     return Response(
         csv_data,
         mimetype="text/csv",
-        headers={
-            "Content-Disposition": "attachment; filename=balances.csv",
-        },
+        headers={"Content-Disposition": "attachment; filename=balances.csv"},
     )
 
 
@@ -1132,20 +1677,15 @@ def admin_withdrawals():
 
     db = get_db()
 
-    # ========= POST: موافقة أو رفض =========
     if request.method == "POST":
         wid = request.form.get("withdrawal_id")
-        action = request.form.get("action")  # "approve" أو "reject"
+        action = request.form.get("action")
 
         if not wid or not action:
             flash("⚠️ بيانات الطلب غير كاملة", "error")
             return redirect(url_for("admin_withdrawals"))
 
-        # نجلب الطلب من جدول pending_withdrawals
-        w = db.execute(
-            "SELECT * FROM pending_withdrawals WHERE id = ?", (wid,)
-        ).fetchone()
-
+        w = db.execute(_sql("SELECT * FROM pending_withdrawals WHERE id = ?"), (wid,)).fetchone()
         if not w:
             flash("⚠️ الطلب غير موجود", "error")
             return redirect(url_for("admin_withdrawals"))
@@ -1159,120 +1699,76 @@ def admin_withdrawals():
         currency = w["currency"]
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # ========== حالة الموافقة ==========
         if action == "approve":
-            # تحديث حالة الطلب
             db.execute(
-                """
-                UPDATE pending_withdrawals
-                SET status = 'completed',
-                    processed_by = ?,
-                    processed_at = ?
-                WHERE id = ?
-                """,
+                _sql("""
+                    UPDATE pending_withdrawals
+                    SET status = 'completed', processed_by = ?, processed_at = ?
+                    WHERE id = ?
+                """),
                 (admin["username"], now_str, wid),
             )
 
-            # تسجيل معاملة
-            log_transaction(
-                user_id,
-                "Withdrawal Approved",
-                amount,
-                currency,
-                f"تم تنفيذ طلب السحب بقيمة {amount} {currency}",
-            )
+            log_transaction(user_id, "Withdrawal Approved", amount, currency, f"تم تنفيذ طلب السحب بقيمة {amount} {currency}")
 
-            # إشعار ثنائي اللغة للمستخدم
             title = "تم تنفيذ طلب السحب / Withdrawal executed"
-            body = (
-                f"تم تنفيذ طلب السحب بقيمة {amount} {currency} بنجاح.\n"
-                f"Withdrawal of {amount} {currency} has been processed successfully."
-            )
+            body = f"تم تنفيذ طلب السحب بقيمة {amount} {currency} بنجاح.\nWithdrawal of {amount} {currency} has been processed successfully."
 
             db.execute(
-                """
-                INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
-                VALUES (?, ?, ?, ?, 0, ?)
-                """,
-                (
-                    user_id,
-                    title,
-                    body,
-                    "withdraw_approved",
-                    now_str,
-                ),
+                _sql("""
+                    INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
+                    VALUES (?, ?, ?, ?, 0, ?)
+                """),
+                (user_id, title, body, "withdraw_approved", now_str),
             )
 
             db.commit()
             flash("✅ تم اعتماد طلب السحب وإرسال إشعار للمستخدم.", "success")
             return redirect(url_for("admin_withdrawals"))
 
-        # ========== حالة الرفض ==========
         if action == "reject":
-            # إرجاع المبلغ إلى رصيد المستخدم
             change_balance(user_id, currency, amount)
 
-            # تحديث حالة الطلب
             db.execute(
-                """
-                UPDATE pending_withdrawals
-                SET status = 'rejected',
-                    processed_by = ?,
-                    processed_at = ?
-                WHERE id = ?
-                """,
+                _sql("""
+                    UPDATE pending_withdrawals
+                    SET status = 'rejected', processed_by = ?, processed_at = ?
+                    WHERE id = ?
+                """),
                 (admin["username"], now_str, wid),
             )
 
-            # تسجيل معاملة
-            log_transaction(
-                user_id,
-                "Withdrawal Rejected",
-                amount,
-                currency,
-                "تم رفض طلب السحب وإرجاع المبلغ إلى الرصيد.",
-            )
+            log_transaction(user_id, "Withdrawal Rejected", amount, currency, "تم رفض طلب السحب وإرجاع المبلغ إلى الرصيد.")
 
-            # إشعار ثنائي اللغة للمستخدم
             title = "تم رفض طلب السحب / Withdrawal rejected"
             body = (
-                f"تم رفض طلب السحب بقيمة {amount} {currency} "
-                f"وتم إرجاع المبلغ إلى رصيد حسابك.\n"
-                f"Withdrawal of {amount} {currency} has been rejected and "
-                f"the amount has been returned to your balance."
+                f"تم رفض طلب السحب بقيمة {amount} {currency} وتم إرجاع المبلغ إلى رصيد حسابك.\n"
+                f"Withdrawal of {amount} {currency} has been rejected and the amount has been returned to your balance."
             )
 
             db.execute(
-                """
-                INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
-                VALUES (?, ?, ?, ?, 0, ?)
-                """,
-                (
-                    user_id,
-                    title,
-                    body,
-                    "withdraw_rejected",
-                    now_str,
-                ),
+                _sql("""
+                    INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
+                    VALUES (?, ?, ?, ?, 0, ?)
+                """),
+                (user_id, title, body, "withdraw_rejected", now_str),
             )
 
             db.commit()
             flash("✅ تم رفض طلب السحب وإرجاع المبلغ للمستخدم.", "success")
             return redirect(url_for("admin_withdrawals"))
 
-        # لو action ليست approve أو reject
         flash("⚠️ إجراء غير معروف", "error")
         return redirect(url_for("admin_withdrawals"))
 
-    # ========= GET: عرض الطلبات المعلقة =========
     withdrawals = db.execute(
-        """
-        SELECT w.*, u.username, u.email
-        FROM pending_withdrawals w
-        JOIN users u ON w.user_id = u.id
-        WHERE w.status = 'pending'
-        ORDER BY w.timestamp DESC
-        """
+        _sql("""
+            SELECT w.*, u.username, u.email
+            FROM pending_withdrawals w
+            JOIN users u ON w.user_id = u.id
+            WHERE w.status = 'pending'
+            ORDER BY w.timestamp DESC
+        """)
     ).fetchall()
 
     return render_template("admin_withdrawals.html", withdrawals=withdrawals)
@@ -1287,19 +1783,15 @@ def admin_deposits():
 
     db = get_db()
 
-    # ========= POST: موافقة أو رفض شحن =========
     if request.method == "POST":
         did = request.form.get("deposit_id")
-        action = request.form.get("action")  # "approve" أو "reject"
+        action = request.form.get("action")
 
         if not did or not action:
             flash("⚠️ بيانات الطلب غير كاملة", "error")
             return redirect(url_for("admin_deposits"))
 
-        dep = db.execute(
-            "SELECT * FROM pending_deposits WHERE id = ?", (did,)
-        ).fetchone()
-
+        dep = db.execute(_sql("SELECT * FROM pending_deposits WHERE id = ?"), (did,)).fetchone()
         if not dep:
             flash("⚠️ الطلب غير موجود", "error")
             return redirect(url_for("admin_deposits"))
@@ -1315,67 +1807,46 @@ def admin_deposits():
         amount = float(dep["amount"])
         fiat_currency = dep["fiat_currency"]
 
-        # لو تم القبول: نضيف الرصيد ونُسجّل معاملة
         if new_status == "completed":
             change_balance(user_id, fiat_currency, amount)
-            log_transaction(
-                user_id,
-                "Binance Topup",
-                amount,
-                fiat_currency,
-                details=f"Approved topup #{dep['id']} via Binance Pay",
-            )
+            log_transaction(user_id, "Binance Topup", amount, fiat_currency, details=f"Approved topup #{dep['id']} via Binance Pay")
 
             title = "تم قبول طلب الشحن / Top-up approved"
-            body = (
-                f"تم شحن حسابك بمبلغ {amount} {fiat_currency} بنجاح.\n"
-                f"Your account has been credited with {amount} {fiat_currency} successfully."
-            )
+            body = f"تم شحن حسابك بمبلغ {amount} {fiat_currency} بنجاح.\nYour account has been credited with {amount} {fiat_currency} successfully."
             notif_type = "deposit_approved"
         else:
             title = "تم رفض طلب الشحن / Top-up rejected"
             body = (
-                f"تم رفض طلب شحن بقيمة {amount} {fiat_currency}. "
-                "يرجى التأكد من التحويل أو التواصل مع الدعم.\n"
-                f"Top-up request of {amount} {fiat_currency} has been rejected. "
-                "Please verify your transfer or contact support."
+                f"تم رفض طلب شحن بقيمة {amount} {fiat_currency}. يرجى التأكد من التحويل أو التواصل مع الدعم.\n"
+                f"Top-up request of {amount} {fiat_currency} has been rejected. Please verify your transfer or contact support."
             )
             notif_type = "deposit_rejected"
 
-        # تحديث سجل الشحن (مع الأعمدة الجديدة)
-        try:
-            db.execute(
-                """
+        db.execute(
+            _sql("""
                 UPDATE pending_deposits
                 SET status = ?, processed_by = ?, processed_at = ?
                 WHERE id = ?
-                """,
-                (new_status, admin["username"], now_str, did),
-            )
-        except sqlite3.OperationalError:
-            # قاعدة بيانات قديمة لا تحتوي الأعمدة الجديدة
-            db.execute(
-                "UPDATE pending_deposits SET status = ? WHERE id = ?",
-                (new_status, did),
-            )
+            """),
+            (new_status, admin["username"], now_str, did),
+        )
 
-        # إدخال إشعار، باستخدام ref_type / ref_id (متوافقة مع السكيمة الحالية)
         try:
             db.execute(
-                """
-                INSERT INTO notifications
-                    (user_id, title, body, type, is_read, created_at, ref_type, ref_id)
-                VALUES (?, ?, ?, ?, 0, ?, 'pending_deposits', ?)
-                """,
+                _sql("""
+                    INSERT INTO notifications
+                        (user_id, title, body, type, is_read, created_at, ref_type, ref_id)
+                    VALUES (?, ?, ?, ?, 0, ?, 'pending_deposits', ?)
+                """),
                 (user_id, title, body, notif_type, now_str, dep["id"]),
             )
-        except sqlite3.OperationalError:
+        except Exception:
             db.execute(
-                """
-                INSERT INTO notifications
-                    (user_id, title, body, type, is_read, created_at)
-                VALUES (?, ?, ?, ?, 0, ?)
-                """,
+                _sql("""
+                    INSERT INTO notifications
+                        (user_id, title, body, type, is_read, created_at)
+                    VALUES (?, ?, ?, ?, 0, ?)
+                """),
                 (user_id, title, body, notif_type, now_str),
             )
 
@@ -1383,15 +1854,14 @@ def admin_deposits():
         flash("✅ تم تحديث حالة طلب الشحن.", "success")
         return redirect(url_for("admin_deposits"))
 
-    # ========= GET: عرض الطلبات المعلقة =========
     deposits = db.execute(
-        """
-        SELECT d.*, u.username, u.email
-        FROM pending_deposits d
-        JOIN users u ON d.user_id = u.id
-        WHERE d.status = 'pending'
-        ORDER BY d.timestamp DESC
-        """
+        _sql("""
+            SELECT d.*, u.username, u.email
+            FROM pending_deposits d
+            JOIN users u ON d.user_id = u.id
+            WHERE d.status = 'pending'
+            ORDER BY d.timestamp DESC
+        """)
     ).fetchall()
 
     return render_template("admin_deposits.html", deposits=deposits)
@@ -1412,29 +1882,27 @@ def notifications():
 
     db = get_db()
 
-    # جلب الإشعارات
     try:
         rows = db.execute(
-            """
-            SELECT id, title, body, type, ref_type, ref_id, is_read, created_at
-            FROM notifications
-            WHERE user_id = ?
-            ORDER BY datetime(created_at) DESC, id DESC
-            """,
+            _sql("""
+                SELECT id, title, body, type, ref_type, ref_id, is_read, created_at
+                FROM notifications
+                WHERE user_id = ?
+                ORDER BY created_at DESC, id DESC
+            """),
             (user["id"],),
         ).fetchall()
-    except sqlite3.OperationalError as e:
+    except Exception as e:
         logging.error("notifications select error: %s", e)
         rows = []
 
-    # تحديث الإشعارات إلى "مقروءة"
     try:
         db.execute(
-            "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0",
+            _sql("UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0"),
             (user["id"],),
         )
         db.commit()
-    except sqlite3.OperationalError as e:
+    except Exception as e:
         logging.error("notifications update error: %s", e)
 
     return render_template("notifications.html", notifications=rows)
@@ -1443,7 +1911,6 @@ def notifications():
 # ==============================
 # صفحات إضافية
 # ==============================
-# عدد المعاملات في كل صفحة
 TRANSACTIONS_PER_PAGE = 5
 
 
@@ -1459,51 +1926,41 @@ def recent_transactions():
 
     db = get_db()
 
-    # رقم الصفحة من الـ query string ?page=2
     try:
         page = int(request.args.get("page", 1) or 1)
     except ValueError:
         page = 1
-
     if page < 1:
         page = 1
 
     per_page = TRANSACTIONS_PER_PAGE
     offset = (page - 1) * per_page
 
-    # جلب 5 سجلات فقط (مع ترتيب من الأحدث إلى الأقدم)
     rows = db.execute(
-        """
-        SELECT type, amount, currency, details, timestamp
-        FROM transactions
-        WHERE user_id = ?
-        ORDER BY datetime(timestamp) DESC, id DESC
-        LIMIT ? OFFSET ?
-        """,
+        _sql("""
+            SELECT type, amount, currency, details, timestamp
+            FROM transactions
+            WHERE user_id = ?
+            ORDER BY timestamp DESC, id DESC
+            LIMIT ? OFFSET ?
+        """),
         (user["id"], per_page, offset),
     ).fetchall()
 
-    # لمعرفة هل توجد صفحة تالية أم لا
     next_row = db.execute(
-        """
-        SELECT 1
-        FROM transactions
-        WHERE user_id = ?
-        LIMIT 1 OFFSET ?
-        """,
+        _sql("""
+            SELECT 1
+            FROM transactions
+            WHERE user_id = ?
+            LIMIT 1 OFFSET ?
+        """),
         (user["id"], offset + per_page),
     ).fetchone()
 
     has_next = next_row is not None
     has_prev = page > 1
 
-    return render_template(
-        "transactions.html",
-        transactions=rows,
-        page=page,
-        has_next=has_next,
-        has_prev=has_prev,
-    )
+    return render_template("transactions.html", transactions=rows, page=page, has_next=has_next, has_prev=has_prev)
 
 
 @app.route("/toggle_language")
@@ -1534,11 +1991,6 @@ def support():
 # ==============================
 @app.route("/telegram/webhook", methods=["POST"])
 def telegram_webhook():
-    """
-    هذا هو Webhook الذي سيستقبل رسائل البوت من Telegram.
-    ضعه في BotFather:
-      https://YOUR_DOMAIN/telegram/webhook
-    """
     if not TELEGRAM_BOT_TOKEN:
         return "Bot token not configured", 200
 
@@ -1550,23 +2002,48 @@ def telegram_webhook():
     if not update:
         return "no update", 200
 
-    # =========================
-    # رسالة نصية عادية
-    # =========================
+    # رسالة نصية
     if "message" in update:
         message = update["message"]
         text = message.get("text", "") or ""
         chat_id = message["chat"]["id"]
         from_user = message.get("from", {})
 
-        # بارامتر start (لإحالات) يأتي من الأمر /start param
         start_param = None
         if text.startswith("/start") and " " in text:
             start_param = text.split(" ", 1)[1].strip()
 
         register_telegram_user(from_user, start_param)
 
-        # /start
+        # ✅ (NEW) إذا أرسل كود ربط LNK-....
+        if text and text.strip().upper().startswith(LINK_CODE_PREFIX):
+            ok, info = redeem_telegram_link_code(from_user.get("id"), text)
+            if ok:
+                platform_user_id = int(info)
+                uname = ""
+                try:
+                    db = get_db()
+                    urow = db.execute(_sql("SELECT username FROM users WHERE id = ?"), (platform_user_id,)).fetchone()
+                    if urow:
+                        uname = urow["username"]
+                except Exception:
+                    pass
+
+                tg_send_message(
+                    chat_id,
+                    "✅ تم ربط حسابك بنجاح.\n"
+                    + (f"👤 حساب المنصة: <b>{uname}</b>" if uname else "")
+                )
+
+                # ✅ (NEW) بعد الربط مباشرة: حاول صرف تلقائي لو كان لديه >= 1$
+                try:
+                    apply_referral_auto_cashout_for_telegram(from_user.get("id"))
+                except Exception:
+                    pass
+            else:
+                tg_send_message(chat_id, f"❌ {info}")
+            return "ok", 200
+
         if text.startswith("/start"):
             tg_id = from_user.get("id")
             ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
@@ -1576,45 +2053,27 @@ def telegram_webhook():
                 "يمكنك من هنا الدخول إلى المنصة، استخدام نظام الإحالات، "
                 "أو الوصول إلى بعض الخدمات الفرعية.\n\n"
                 "🔗 رابط المنصة:\n"
-                f"{SITE_PUBLIC_URL}"
+                f"{SITE_PUBLIC_URL}\n\n"
+                "✅ رابط إحالتك:\n"
+                f"{ref_link}"
             )
 
             keyboard = {
-                "inline_keyboard": [
-                    [
-                        {
-                            "text": "🌐 المنصة / Platform",
-                            "url": SITE_PUBLIC_URL,
-                        }
-                    ],
-                    [
-                        {
-                            "text": "👥 نظام الإحالات / Referrals",
-                            "callback_data": "referrals",
-                        }
-                    ],
-                    [
-                        {
-                            "text": "🧰 الخدمات الفرعية / Services",
-                            "callback_data": "services",
-                        }
-                    ],
-                ]
-            }
+            "inline_keyboard": [
+                [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
+                [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
+                [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
+                [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
+            ]
+        }
 
             tg_send_message(chat_id, welcome_text, reply_markup=keyboard)
             return "ok", 200
 
-        # أي رسالة أخرى حاليًا
-        tg_send_message(
-            chat_id,
-            "استخدم الأمر /start للحصول على القائمة الرئيسية للبوت.",
-        )
+        tg_send_message(chat_id, "استخدم الأمر /start للحصول على القائمة الرئيسية للبوت.")
         return "ok", 200
 
-    # =========================
-    # الضغط على زر Inline (callback_query)
-    # =========================
+    # أزرار Inline
     if "callback_query" in update:
         cq = update["callback_query"]
         data = cq.get("data")
@@ -1623,41 +2082,36 @@ def telegram_webhook():
         tg_id = from_user.get("id")
         callback_id = cq.get("id")
 
-        # إزالة الـ Loading
         if callback_id:
             tg_answer_callback(callback_id)
 
-        # --- زر الإحالات ---
         if data == "referrals":
             ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
 
             db = get_db()
+            referral_credits = 0.0
             try:
                 row = db.execute(
-                    "SELECT referral_credits_usd FROM telegram_users WHERE telegram_id = ?",
+                    _sql("SELECT referral_credits_usd FROM telegram_users WHERE telegram_id = ?"),
                     (tg_id,),
                 ).fetchone()
-                referral_credits = (
-                    float(row["referral_credits_usd"])
-                    if row and row["referral_credits_usd"] is not None
-                    else 0.0
-                )
-            except sqlite3.OperationalError:
-                # في حالة أن عمود referral_credits_usd غير موجود بعد
-                referral_credits = 0.0
+                if row and row.get("referral_credits_usd") is not None:
+                    referral_credits = float(row["referral_credits_usd"])
+            except Exception as e:
+                logging.warning("referrals select error: %s", e)
 
             msg = (
                 "👥 <b>نظام الإحالات</b>\n\n"
-                f"رصيد مكافآت الإحالة الخاص بك: <b>{referral_credits:.2f}$</b>\n\n"
+                f"رصيد مكافآت الإحالة الخاص بك: <b>{referral_credits:.3f}$</b>\n\n"
                 "هذا هو رابط الإحالة الخاص بك:\n"
                 f"{ref_link}\n\n"
-                "أي مستخدم يفتح البوت لأول مرة عبر هذا الرابط "
-                "سيُسجَّل كإحالة مرتبطة بحسابك في البوت."
+                f"🎁 مكافأة الإحالة المباشرة: {REF_L1_BONUS_USD}$\n"
+                f"🎁 مكافأة الإحالة غير المباشرة (Level 2): {REF_L2_BONUS_USD}$\n\n"
+                "ℹ️ عند وصول أرباح الإحالة إلى 1$ سيتم تحويلها تلقائياً إلى رصيدك في المنصة (USD) إذا كان حسابك مربوطاً."
             )
             tg_send_message(chat_id, msg)
             return "ok", 200
 
-        # --- زر الخدمات الفرعية ---
         if data == "services":
             msg = (
                 "🧰 <b>الخدمات الفرعية</b>\n\n"
@@ -1667,36 +2121,87 @@ def telegram_webhook():
             tg_send_message(chat_id, msg)
             return "ok", 200
 
-        # أي callback غير معروف
-        tg_send_message(chat_id, "الخيار غير معروف حالياً.")
+        # ✅ (NEW) شرح الربط
+        if data == "link_account":
+            link_url = f"{SITE_PUBLIC_URL}/link_telegram"
+            msg = (
+                "🔗 <b>ربط الحساب</b>\n\n"
+                "1) افتح صفحة الربط من الزر بالأسفل.\n"
+                "2) اضغط: توليد كود.\n"
+                "3) انسخ الكود.\n"
+                "4) أرسله هنا في البوت (مثال: LNK-ABC12345)\n\n"
+                "📌 الكود صالح لمدة 10 دقائق."
+            )
+            kb = {"inline_keyboard": [[{"text": "🔗 فتح صفحة الربط", "url": link_url}]]}
+            tg_send_message(chat_id, msg, reply_markup=kb)
+        else:
+            tg_send_message(chat_id, "الخيار غير معروف حالياً.")
+
         return "ok", 200
 
-    # أنواع أخرى من التحديثات نتجاهلها الآن
-    return "ok", 200
+# ==============================
+# ✅ (NEW) ربط الحساب من المنصة (routes)
+# ==============================
+@app.route("/link_telegram", methods=["GET", "POST"])
+def link_telegram():
+    if "username" not in session:
+        return redirect(url_for("login"))
 
-# إنشاء حساب أدمن تلقائي عند التشغيل الأول (Render)
+    user = get_user(session["username"])
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    # هل هذا المستخدم مرتبط مسبقاً؟
+    db = get_db()
+    linked_row = db.execute(
+    _sql("SELECT telegram_id FROM telegram_users WHERE platform_user_id = ? LIMIT 1"),
+    (user["id"],),
+).fetchone()
+    linked_telegram_id = linked_row["telegram_id"] if linked_row else None
+
+    code = None
+    if request.method == "POST":
+        code = create_telegram_link_code(user["id"], minutes_valid=10)
+        flash("✅ تم توليد كود ربط جديد (صالح لمدة 10 دقائق).", "success")
+
+    return render_template(
+        "link_telegram.html",
+        linked_telegram_id=linked_telegram_id,
+        code=code,
+    )
+
+
+@app.route("/unlink_telegram", methods=["POST"])
+def unlink_telegram():
+    if "username" not in session:
+        return redirect(url_for("login"))
+
+    user = get_user(session["username"])
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    db = get_db()
+    # فك الربط عن هذا المستخدم في المنصة
+    db.execute(
+        _sql("UPDATE telegram_users SET platform_user_id = NULL, linked_at = NULL WHERE platform_user_id = ?"),
+        (user["id"],),
+    )
+    db.commit()
+
+    flash("✅ تم إلغاء ربط حساب Telegram.", "success")
+    return redirect(url_for("link_telegram"))
+
+
+# ==============================
+# توافق قديم: ensure_admin (بدون تكرار)
+# ==============================
 def ensure_admin():
-    db = sqlite3.connect(DB_PATH)
-    cur = db.cursor()
-    cur.execute("SELECT id FROM users WHERE username='admin'")
-    if not cur.fetchone():
-        from werkzeug.security import generate_password_hash
-        cur.execute(
-            """
-            INSERT INTO users (username, email, phone, password_hash, is_admin)
-            VALUES ('admin', 'admin@example.com', '', ?, 1)
-            """,
-            (generate_password_hash("admin123"),),
-        )
-        db.commit()
-        print("✅ Admin account created on Render (admin / admin123)")
-    else:
-        print("ℹ️ Admin account already exists.")
-    db.close()
+    ensure_default_admin()
 
 
 ensure_admin()
-
 
 # ==============================
 # تشغيل التطبيق
