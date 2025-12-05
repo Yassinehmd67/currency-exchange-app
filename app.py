@@ -927,7 +927,7 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
         except Exception:
             pass
         return False, "❌ حدث خطأ أثناء الربط. حاول مرة أخرى."
-        
+
 # ==============================
 # ✅ (NEW) Auto cashout referrals to platform when >= 1$
 # ==============================
@@ -1929,40 +1929,44 @@ def telegram_webhook():
             start_param = text.split(" ", 1)[1].strip()
 
         register_telegram_user(from_user, start_param)
-        
+
         # ✅ (NEW) إذا أرسل كود ربط (LNK-XXXXXXX أو XXXXXXXX)
-raw = (text or "").strip().upper()
+        raw = (text or "").strip().upper()
+        is_prefixed = raw.startswith(LINK_CODE_PREFIX)
+        is_plain = bool(re.fullmatch(r"[A-Z0-9]{8}", raw))  # مثل: 5CE92V5R
 
-is_prefixed = raw.startswith(LINK_CODE_PREFIX)
-is_plain = bool(re.fullmatch(r"[A-Z0-9]{8}", raw))  # مثل: 5CE92V5R
+        if is_prefixed or is_plain:
+            code_to_redeem = raw if is_prefixed else f"{LINK_CODE_PREFIX}{raw}"
 
-if is_prefixed or is_plain:
-    ok, info = redeem_telegram_link_code(from_user.get("id"), raw)
+            ok, info = redeem_telegram_link_code(from_user.get("id"), code_to_redeem)
+            if ok:
+                platform_user_id = int(info)
+                uname = ""
+                try:
+                    db = get_db()
+                    urow = db.execute(
+                        _sql("SELECT username FROM users WHERE id = ?"),
+                        (platform_user_id,),
+                    ).fetchone()
+                    if urow:
+                        uname = urow["username"]
+                except Exception:
+                    pass
 
-    if ok:
-        platform_user_id = int(info)
-        uname = ""
-        try:
-            db = get_db()
-            urow = db.execute(_sql("SELECT username FROM users WHERE id = ?"), (platform_user_id,)).fetchone()
-            if urow:
-                uname = urow["username"]
-        except Exception:
-            pass
+                tg_send_message(
+                    chat_id,
+                    "✅ تم ربط حسابك بنجاح.\n"
+                    + (f"👤 حساب المنصة: <b>{uname}</b>" if uname else ""),
+                )
 
-        tg_send_message(
-            chat_id,
-            "✅ تم ربط حسابك بنجاح.\n" + (f"👤 حساب المنصة: <b>{uname}</b>" if uname else "")
-        )
+                try:
+                    apply_referral_auto_cashout_for_telegram(from_user.get("id"))
+                except Exception:
+                    pass
+            else:
+                tg_send_message(chat_id, f"❌ {info}")
 
-        try:
-            apply_referral_auto_cashout_for_telegram(from_user.get("id"))
-        except Exception:
-            pass
-    else:
-        tg_send_message(chat_id, f"❌ {info}")
-
-    return "ok", 200
+            return "ok", 200
 
         if text.startswith("/start"):
             tg_id = from_user.get("id")
@@ -1979,20 +1983,20 @@ if is_prefixed or is_plain:
             )
 
             keyboard = {
-            "inline_keyboard": [
-                [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
-                [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
-                [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
-                [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
-            ]
-        }
+                "inline_keyboard": [
+                    [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
+                    [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
+                    [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
+                    [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
+                ]
+            }
 
             tg_send_message(chat_id, welcome_text, reply_markup=keyboard)
             return "ok", 200
 
         tg_send_message(chat_id, "استخدم الأمر /start للحصول على القائمة الرئيسية للبوت.")
         return "ok", 200
-
+        
     # أزرار Inline
     if "callback_query" in update:
         cq = update["callback_query"]
