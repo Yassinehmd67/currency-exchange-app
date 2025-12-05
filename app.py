@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import sqlite3
 import logging
 import hashlib
@@ -1910,16 +1911,26 @@ def telegram_webhook():
             start_param = text.split(" ", 1)[1].strip()
 
         register_telegram_user(from_user, start_param)
+        
+        # ✅ (NEW) إذا أرسل كود ربط (مع LNK- أو بدونها)
+        raw = (text or "").strip().upper()
 
-        # ✅ (NEW) إذا أرسل كود ربط LNK-....
-        if text and text.strip().upper().startswith(LINK_CODE_PREFIX):
-            ok, info = redeem_telegram_link_code(from_user.get("id"), text)
+        is_prefixed = raw.startswith(LINK_CODE_PREFIX)
+        is_plain = bool(re.fullmatch(r"[A-Z0-9]{8}", raw))  # مثل: TOKQDROU
+
+        if is_prefixed or is_plain:
+            code_to_redeem = raw if is_prefixed else f"{LINK_CODE_PREFIX}{raw}"
+
+            ok, info = redeem_telegram_link_code(from_user.get("id"), code_to_redeem)
             if ok:
                 platform_user_id = int(info)
                 uname = ""
                 try:
                     db = get_db()
-                    urow = db.execute(_sql("SELECT username FROM users WHERE id = ?"), (platform_user_id,)).fetchone()
+                    urow = db.execute(
+                        _sql("SELECT username FROM users WHERE id = ?"),
+                        (platform_user_id,)
+                    ).fetchone()
                     if urow:
                         uname = urow["username"]
                 except Exception:
@@ -1931,13 +1942,13 @@ def telegram_webhook():
                     + (f"👤 حساب المنصة: <b>{uname}</b>" if uname else "")
                 )
 
-                # ✅ (NEW) بعد الربط مباشرة: حاول صرف تلقائي لو كان لديه >= 1$
                 try:
                     apply_referral_auto_cashout_for_telegram(from_user.get("id"))
                 except Exception:
                     pass
             else:
                 tg_send_message(chat_id, f"❌ {info}")
+
             return "ok", 200
 
         if text.startswith("/start"):
