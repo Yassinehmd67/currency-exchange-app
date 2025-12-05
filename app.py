@@ -688,7 +688,12 @@ def _generate_link_code(length=8):
 def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) -> str:
     db = get_db()
 
-    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=minutes_valid)).strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now(timezone.utc)
+    expires_at_dt = now + timedelta(minutes=minutes_valid)
+
+    # نخزن بصيغة ISO (تشتغل ممتاز في Neon/Render) وتتفادى مشاكل المقارنة
+    expires_at = expires_at_dt.isoformat()
+    created_at = now.isoformat()
 
     alphabet = string.ascii_uppercase + string.digits
     attempts = 25
@@ -700,17 +705,32 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
 
         try:
             if USE_POSTGRES:
-                # 1) اكتشاف اسم عمود المستخدم (user_id القديم أو platform_user_id الجديد)
                 cur = db.cursor()
-                has_user_id = _pg_column_exists(cur, "telegram_link_codes", "user_id")
-                user_col = "user_id" if has_user_id else "platform_user_id"
 
-                # 2) اكتشاف الأعمدة الموجودة فعلاً (code / code_hash)
+                # أعمدة قديمة/جديدة
+                has_user_id = _pg_column_exists(cur, "telegram_link_codes", "user_id")
+                has_platform_user_id = _pg_column_exists(cur, "telegram_link_codes", "platform_user_id")
                 has_code = _pg_column_exists(cur, "telegram_link_codes", "code")
                 has_code_hash = _pg_column_exists(cur, "telegram_link_codes", "code_hash")
+                has_created_at = _pg_column_exists(cur, "telegram_link_codes", "created_at")
 
-                cols = [user_col, "expires_at"]
-                vals = [platform_user_id, expires_at]
+                cols = []
+                vals = []
+
+                # ✅ املأ الاثنين إن وُجِدا (لمنع NOT NULL على السكيما القديمة)
+                if has_user_id:
+                    cols.append("user_id")
+                    vals.append(platform_user_id)
+                if has_platform_user_id:
+                    cols.append("platform_user_id")
+                    vals.append(platform_user_id)
+
+                cols.append("expires_at")
+                vals.append(expires_at)
+
+                if has_created_at:
+                    cols.append("created_at")
+                    vals.append(created_at)
 
                 if has_code:
                     cols.append("code")
@@ -723,7 +743,6 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
                 cols_sql = ", ".join(cols)
                 ph_sql = ", ".join(["?"] * len(vals))
 
-                # IMPORTANT: بدون target داخل ON CONFLICT حتى يشتغل مع أي unique constraint موجود (code أو code_hash)
                 row = db.execute(
                     _sql(f"""
                         INSERT INTO telegram_link_codes ({cols_sql})
@@ -741,7 +760,7 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
                 db.commit()
                 continue
 
-            # SQLite
+            # SQLite (قد لا تستخدمه عندك الآن، لكن نتركه كما هو)
             cur2 = db.execute(
                 """
                 INSERT OR IGNORE INTO telegram_link_codes (platform_user_id, code, expires_at)
@@ -757,201 +776,64 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
             last_err = str(e)
             logging.warning("create_telegram_link_code attempt failed: %s", e)
 
-            # Postgres: لازم rollback على الاتصال الحقيقي
+            # مهم في Postgres: rollback حتى لا تبقى transaction aborted
             try:
-                if USE_POSTGRES and hasattr(db, "_conn"):
-                    db._conn.rollback()
+                if USE_POSTGRES:
+                    if hasattr(db, "rollback"):
+                        db.rollback()
+                    elif hasattr(db, "_conn"):
+                        db._conn.rollback()
             except Exception:
                 pass
 
     raise RuntimeError(f"Failed to generate a unique link code. Last error: {last_err}")
 
-def redeem_telegram_link_code(telegram_id: int, code: str):
-    """
-    يحاول ربط Telegram بالمستخدم في المنصة باستخدام code.
-    يرجع: (ok: bool, message: str)
-    """
-    if not telegram_id or not code:
-        return False, "بيانات غير مكتملة."
-
-    code = (code or "").strip().upper()
-    now = datetime.now(timezone.utc)
-    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
-
-    db = get_db()
-
-    try:
-        # 1) جلب الكود (غير مستخدم + غير منتهي)
-        row = db.execute(
-            _sql("""
-                SELECT *
-                FROM telegram_link_codes
-                WHERE code = ?
-                LIMIT 1
-            """),
-            (code,),
-        ).fetchone()
-
-        if not row:
-            return False, "❌ الكود غير صحيح."
-
-        # used_at
-        used_at = row.get("used_at") if isinstance(row, dict) else row["used_at"]
-        if used_at:
-            return False, "⚠️ هذا الكود تم استخدامه من قبل."
-
-        # expires_at
-        expires_at_raw = row.get("expires_at") if isinstance(row, dict) else row["expires_at"]
-        try:
-            expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
-        except Exception:
-            # fallback لصيغة strftime
-            expires_at = datetime.strptime(str(expires_at_raw)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-
-        if expires_at < now:
-            return False, "⏳ انتهت صلاحية الكود. ارجع للمنصة وولّد كود جديد."
-
-        # 2) تحديد اسم عمود المستخدم داخل telegram_link_codes (قد يكون user_id أو platform_user_id)
-        platform_user_id = None
-        if USE_POSTGRES:
-            cur = db.cursor()
-            has_user_id = _pg_column_exists(cur, "telegram_link_codes", "user_id")
-            user_col = "user_id" if has_user_id else "platform_user_id"
-            platform_user_id = row.get(user_col) if isinstance(row, dict) else row[user_col]
-        else:
-            # SQLite: نعتمد platform_user_id
-            platform_user_id = row.get("platform_user_id") if isinstance(row, dict) else row["platform_user_id"]
-
-        if not platform_user_id:
-            return False, "❌ خطأ في بيانات الكود (لا يوجد platform_user_id)."
-
-        platform_user_id = int(platform_user_id)
-
-        # 3) تأكد أن هذا المستخدم في المنصة غير مرتبط مسبقًا بتليجرام آخر
-        existing = db.execute(
-            _sql("""
-                SELECT telegram_id
-                FROM telegram_users
-                WHERE platform_user_id = ?
-                LIMIT 1
-            """),
-            (platform_user_id,),
-        ).fetchone()
-
-        if existing:
-            ex_tid = existing.get("telegram_id") if isinstance(existing, dict) else existing["telegram_id"]
-            if ex_tid and int(ex_tid) != int(telegram_id):
-                return False, "⚠️ هذا الحساب في المنصة مرتبط أصلًا بحساب Telegram آخر. قم بإلغاء الربط من المنصة أولًا."
-
-        # 4) تأكد أن مستخدم تيليجرام موجود في telegram_users
-        tg_row = db.execute(
-            _sql("SELECT telegram_id, platform_user_id FROM telegram_users WHERE telegram_id = ?"),
-            (telegram_id,),
-        ).fetchone()
-
-        if not tg_row:
-            # نسجله كحد أدنى (إذا لم يكن مسجلًا من قبل)
-            if USE_POSTGRES:
-                db.execute(
-                    _sql("""
-                        INSERT INTO telegram_users (telegram_id, referral_credits_usd, created_at)
-                        VALUES (?, 0, ?)
-                        ON CONFLICT (telegram_id) DO NOTHING
-                    """),
-                    (telegram_id, now_str),
-                )
-            else:
-                db.execute(
-                    """
-                    INSERT OR IGNORE INTO telegram_users (telegram_id, referral_credits_usd, created_at)
-                    VALUES (?, 0, ?)
-                    """,
-                    (telegram_id, now_str),
-                )
-
-        else:
-            # إذا هذا التيليجرام مرتبط بحساب منصة آخر
-            current_link = tg_row.get("platform_user_id") if isinstance(tg_row, dict) else tg_row["platform_user_id"]
-            if current_link and int(current_link) != platform_user_id:
-                return False, "⚠️ حساب Telegram هذا مرتبط بحساب منصة آخر. قم بإلغاء الربط من المنصة أولًا."
-
-        # 5) تنفيذ الربط
-        db.execute(
-            _sql("""
-                UPDATE telegram_users
-                SET platform_user_id = ?, linked_at = ?
-                WHERE telegram_id = ?
-            """),
-            (platform_user_id, now_str, telegram_id),
-        )
-
-        db.execute(
-            _sql("""
-                UPDATE telegram_link_codes
-                SET used_at = ?, used_by_telegram_id = ?
-                WHERE code = ?
-            """),
-            (now_str, telegram_id, code),
-        )
-
-        db.commit()
-        return True, "✅ تم ربط حساب Telegram بنجاح! يمكنك الرجوع للمنصة الآن."
-
-    except Exception as e:
-        logging.error("redeem_telegram_link_code error: %s", e)
-        try:
-            if USE_POSTGRES:
-                db.rollback()
-        except Exception:
-            pass
-        return False, "❌ حدث خطأ أثناء الربط. حاول مرة أخرى."    
-
 def redeem_telegram_link_code(telegram_id: int, code_raw: str):
     """
-    يحاول ربط telegram_id بحساب منصة عبر الكود.
+    يربط telegram_id بحساب منصة عبر الكود.
     يرجع (success: bool, info/message: str)
     - عند النجاح يرجع platform_user_id كنص في info.
     """
-    if not code_raw:
-        return False, "كود غير صالح."
+    if not telegram_id or not code_raw:
+        return False, "بيانات غير مكتملة."
 
     code = code_raw.strip().upper()
     if not code.startswith(LINK_CODE_PREFIX):
         return False, "صيغة الكود غير صحيحة."
 
     db = get_db()
-    now = _now_str()
+    now_dt = datetime.now(timezone.utc)
+    now_iso = now_dt.isoformat()
 
-    # تأكد أن هذا التليجرام غير مربوط مسبقاً
     try:
+        # تأكد أن هذا التليجرام غير مربوط مسبقاً
         row_tg = db.execute(
             _sql("SELECT platform_user_id FROM telegram_users WHERE telegram_id = ?"),
             (telegram_id,),
         ).fetchone()
         if row_tg and row_tg.get("platform_user_id"):
             return False, "هذا الحساب مربوط مسبقاً."
-    except Exception:
-        pass
 
-    # Postgres: UPDATE..RETURNING (آمن ضد الاستخدام المزدوج)
-    if USE_POSTGRES:
-        try:
-            cur = db.execute(
+        if USE_POSTGRES:
+            # ✅ عملية ذرّية: تحديث الكود (غير مستعمل + غير منتهي) ثم نأخذ user id
+            # نستخدم COALESCE لأن جدولك فيه user_id و platform_user_id معًا
+            r = db.execute(
                 _sql("""
                     UPDATE telegram_link_codes
                     SET used_at = ?, used_by_telegram_id = ?
                     WHERE code = ?
                       AND used_at IS NULL
-                      AND expires_at > ?
-                    RETURNING platform_user_id
+                      AND expires_at::timestamptz > now()
+                    RETURNING COALESCE(platform_user_id, user_id) AS platform_user_id
                 """),
-                (now, telegram_id, code, now),
-            )
-            r = cur.fetchone()
+                (now_iso, telegram_id, code),
+            ).fetchone()
+
             if not r:
+                db.rollback()
                 return False, "الكود غير صحيح أو منتهي أو مستعمل."
 
-            platform_user_id = r["platform_user_id"]
+            platform_user_id = int(r["platform_user_id"])
 
             # اربط في telegram_users
             db.execute(
@@ -960,33 +842,42 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
                     SET platform_user_id = ?, linked_at = ?
                     WHERE telegram_id = ?
                 """),
-                (platform_user_id, now, telegram_id),
+                (platform_user_id, now_iso, telegram_id),
             )
+
             db.commit()
             return True, str(platform_user_id)
-        except Exception as e:
-            logging.error("redeem_telegram_link_code pg error: %s", e)
-            return False, "حدث خطأ أثناء الربط."
 
-    # SQLite: SELECT ثم UPDATE
-    try:
+        # SQLite fallback
         row = db.execute(
             _sql("""
-                SELECT platform_user_id, expires_at, used_at
+                SELECT platform_user_id, user_id, expires_at, used_at
                 FROM telegram_link_codes
                 WHERE code = ?
+                LIMIT 1
             """),
             (code,),
         ).fetchone()
 
         if not row:
             return False, "الكود غير صحيح."
+
         if row.get("used_at"):
             return False, "هذا الكود مستعمل مسبقاً."
-        if row.get("expires_at") <= now:
+
+        # مقارنة مبسطة (يفضل أن تكون نفس صيغة التخزين)
+        expires_at_raw = row.get("expires_at")
+        try:
+            exp = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
+        except Exception:
+            exp = datetime.strptime(str(expires_at_raw)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+
+        if exp <= now_dt:
             return False, "هذا الكود منتهي."
 
-        platform_user_id = row["platform_user_id"]
+        platform_user_id = row.get("platform_user_id") or row.get("user_id")
+        if not platform_user_id:
+            return False, "خطأ في بيانات الكود."
 
         db.execute(
             _sql("""
@@ -994,7 +885,7 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
                 SET used_at = ?, used_by_telegram_id = ?
                 WHERE code = ? AND used_at IS NULL
             """),
-            (now, telegram_id, code),
+            (now_iso, telegram_id, code),
         )
 
         db.execute(
@@ -1003,15 +894,20 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
                 SET platform_user_id = ?, linked_at = ?
                 WHERE telegram_id = ?
             """),
-            (platform_user_id, now, telegram_id),
+            (int(platform_user_id), now_iso, telegram_id),
         )
 
         db.commit()
-        return True, str(platform_user_id)
-    except Exception as e:
-        logging.error("redeem_telegram_link_code sqlite error: %s", e)
-        return False, "حدث خطأ أثناء الربط."
+        return True, str(int(platform_user_id))
 
+    except Exception as e:
+        logging.error("redeem_telegram_link_code error: %s", e)
+        try:
+            if USE_POSTGRES:
+                db.rollback()
+        except Exception:
+            pass
+        return False, "❌ حدث خطأ أثناء الربط. حاول مرة أخرى."
 
 # ==============================
 # ✅ (NEW) Auto cashout referrals to platform when >= 1$
@@ -2142,7 +2038,7 @@ def telegram_webhook():
 # ==============================
 # ✅ (NEW) ربط الحساب من المنصة (routes)
 # ==============================
-@app.route("/link_telegram", methods=["GET", "POST"])
+@app.route("/link_telegram")
 def link_telegram():
     if "username" not in session:
         return redirect(url_for("login"))
@@ -2152,25 +2048,56 @@ def link_telegram():
         session.clear()
         return redirect(url_for("login"))
 
-    # هل هذا المستخدم مرتبط مسبقاً؟
     db = get_db()
-    linked_row = db.execute(
-    _sql("SELECT telegram_id FROM telegram_users WHERE platform_user_id = ? LIMIT 1"),
-    (user["id"],),
-).fetchone()
-    linked_telegram_id = linked_row["telegram_id"] if linked_row else None
 
-    code = None
-    if request.method == "POST":
-        code = create_telegram_link_code(user["id"], minutes_valid=10)
-        flash("✅ تم توليد كود ربط جديد (صالح لمدة 10 دقائق).", "success")
+    tg_link = None
+    try:
+        tg_link = db.execute(
+            _sql("""
+                SELECT telegram_id, username, first_name, last_name, linked_at
+                FROM telegram_users
+                WHERE platform_user_id = ?
+                LIMIT 1
+            """),
+            (user["id"],),
+        ).fetchone()
+    except Exception:
+        tg_link = None
 
+    # جلب آخر كود صالح (غير مستخدم وغير منتهي) إن وجد
+    active_code = None
+    try:
+        active_code = db.execute(
+            _sql("""
+                SELECT code, expires_at
+                FROM telegram_link_codes
+                WHERE COALESCE(platform_user_id, user_id) = ?
+                  AND used_at IS NULL
+                  AND expires_at::timestamptz > now()
+                ORDER BY id DESC
+                LIMIT 1
+            """) if USE_POSTGRES else _sql("""
+                SELECT code, expires_at
+                FROM telegram_link_codes
+                WHERE platform_user_id = ?
+                  AND used_at IS NULL
+                  AND expires_at > ?
+                ORDER BY id DESC
+                LIMIT 1
+            """),
+            (user["id"],) if USE_POSTGRES else (user["id"], datetime.now(timezone.utc).isoformat()),
+        ).fetchone()
+    except Exception:
+        active_code = None
+
+    # إذا غير مربوط ومافيش كود صالح => لا نولّد تلقائياً، فقط نعرض زر التوليد
     return render_template(
         "link_telegram.html",
-        linked_telegram_id=linked_telegram_id,
-        code=code,
+        user=user,
+        tg_link=tg_link,
+        active_code=active_code,
+        link_code_prefix=LINK_CODE_PREFIX,
     )
-
 
 @app.route("/unlink_telegram", methods=["POST"])
 def unlink_telegram():
@@ -2183,16 +2110,62 @@ def unlink_telegram():
         return redirect(url_for("login"))
 
     db = get_db()
+
     # فك الربط عن هذا المستخدم في المنصة
     db.execute(
-        _sql("UPDATE telegram_users SET platform_user_id = NULL, linked_at = NULL WHERE platform_user_id = ?"),
+        _sql("""
+            UPDATE telegram_users
+            SET platform_user_id = NULL, linked_at = NULL
+            WHERE platform_user_id = ?
+        """),
         (user["id"],),
     )
-    db.commit()
 
+    # (اختياري) تنظيف أكواد قديمة مرتبطة به
+    try:
+        if USE_POSTGRES:
+            db.execute(
+                _sql("""
+                    UPDATE telegram_link_codes
+                    SET used_by_telegram_id = NULL
+                    WHERE COALESCE(platform_user_id, user_id) = ?
+                """),
+                (user["id"],),
+            )
+        else:
+            db.execute(
+                """
+                UPDATE telegram_link_codes
+                SET used_by_telegram_id = NULL
+                WHERE platform_user_id = ?
+                """,
+                (user["id"],),
+            )
+    except Exception:
+        pass
+
+    db.commit()
     flash("✅ تم إلغاء ربط حساب Telegram.", "success")
     return redirect(url_for("link_telegram"))
 
+@app.route("/generate_telegram_link_code", methods=["POST"])
+def generate_telegram_link_code():
+    if "username" not in session:
+        return redirect(url_for("login"))
+
+    user = get_user(session["username"])
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    try:
+        create_telegram_link_code(user["id"], minutes_valid=10)
+        flash("✅ تم توليد كود ربط جديد.", "success")
+    except Exception as e:
+        logging.error("generate_telegram_link_code error: %s", e)
+        flash("❌ تعذر توليد كود الربط. حاول مرة أخرى.", "error")
+
+    return redirect(url_for("link_telegram"))    
 
 # ==============================
 # توافق قديم: ensure_admin (بدون تكرار)

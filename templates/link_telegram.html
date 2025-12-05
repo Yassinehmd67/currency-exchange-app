@@ -4,326 +4,255 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>
-    {% if session.get('lang','ar') == 'en' %}
-      Link Telegram
-    {% else %}
-      ربط حساب Telegram
-    {% endif %}
+    {% if session.get('lang') == 'en' %}Link Telegram{% else %}ربط تيليجرام{% endif %}
   </title>
 
   <style>
     body{
-      font-family:'Cairo',sans-serif;
+      font-family: 'Cairo', sans-serif;
       background:#0b1220;
+      color:#e5e7eb;
       margin:0;
       padding:0;
       direction: {{ 'rtl' if session.get('lang','ar') == 'ar' else 'ltr' }};
-      color:#e5e7eb;
     }
     .wrap{
-      max-width:900px;
-      margin:24px auto;
-      padding:0 16px 40px;
+      max-width: 900px;
+      margin: 28px auto;
+      padding: 0 16px 40px;
     }
-    .top-actions{
+    .card{
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+    }
+    .top{
       display:flex;
-      gap:10px;
-      justify-content:flex-end;
       align-items:center;
-      margin-bottom:14px;
-      flex-wrap:wrap;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom: 12px;
+    }
+    .title{
+      font-size: 20px;
+      font-weight: 800;
+      margin:0;
     }
     .btn{
       display:inline-block;
-      padding:10px 14px;
-      border-radius:12px;
-      text-decoration:none;
-      font-weight:700;
-      font-size:14px;
-      border:1px solid rgba(255,255,255,.15);
-      background:rgba(255,255,255,.06);
-      color:#fff;
+      border:0;
       cursor:pointer;
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-weight: 700;
+      font-size: 14px;
+      text-decoration:none;
+      color:#0b1220;
+      background:#93c5fd;
     }
-    .btn:hover{ background:rgba(255,255,255,.10); }
-
-    .card{
-      background:rgba(255,255,255,.06);
-      border:1px solid rgba(255,255,255,.10);
-      border-radius:18px;
-      padding:20px;
-      box-shadow:0 10px 35px rgba(0,0,0,.25);
+    .btn:hover{ opacity: 0.92; }
+    .btn-danger{
+      background:#fb7185;
+      color:#0b1220;
     }
-    h1{
-      margin:0 0 6px 0;
-      text-align:center;
-      font-size:26px;
-      letter-spacing:.2px;
+    .muted{
+      opacity:0.85;
+      font-size: 14px;
+      line-height: 1.7;
+      white-space: pre-line;
     }
-    .sub{
-      text-align:center;
-      opacity:.8;
-      margin:0 0 16px 0;
-      font-size:14px;
-      line-height:1.6;
-    }
-    .grid{
+    .row{
       display:grid;
       grid-template-columns: 1fr;
-      gap:16px;
-      margin-top:14px;
+      gap: 14px;
+      margin-top: 14px;
     }
-    @media(min-width:900px){
-      .grid{ grid-template-columns: 1fr 1fr; }
+    @media (min-width: 900px){
+      .row{ grid-template-columns: 1fr 1fr; }
     }
-
     .box{
-      border-radius:16px;
-      border:1px solid rgba(255,255,255,.10);
-      background:rgba(17,24,39,.55);
-      padding:16px;
+      background: rgba(0,0,0,0.22);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 14px;
+      padding: 14px;
     }
-    .box h3{
-      margin:0 0 10px 0;
-      font-size:16px;
-      opacity:.95;
+    .label{
+      font-size: 13px;
+      opacity: 0.8;
+      margin-bottom: 6px;
     }
-    .steps{
-      margin:0;
-      padding:0 18px;
-      line-height:1.9;
-      font-size:14px;
-      opacity:.9;
+    .code{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 18px;
+      letter-spacing: 2px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.08);
+      border: 1px dashed rgba(255,255,255,0.25);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
     }
+    .copy{
+      border: 0;
+      padding: 8px 10px;
+      border-radius: 10px;
+      cursor:pointer;
+      background: rgba(255,255,255,0.16);
+      color:#e5e7eb;
+      font-weight: 700;
+    }
+    .copy:hover{ background: rgba(255,255,255,0.22); }
     .status{
       display:inline-flex;
       align-items:center;
       gap:8px;
-      padding:8px 12px;
-      border-radius:999px;
-      font-size:13px;
-      border:1px solid rgba(255,255,255,.12);
-      background:rgba(255,255,255,.06);
-      margin-top:10px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      border:1px solid rgba(255,255,255,0.18);
+      background: rgba(0,0,0,0.18);
     }
-    .status.ok{ border-color: rgba(34,197,94,.35); }
-    .status.warn{ border-color: rgba(245,158,11,.35); }
-
-    .code{
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      background:rgba(0,0,0,.35);
-      padding:12px 14px;
-      border-radius:12px;
-      border:1px dashed rgba(255,255,255,.20);
-      font-size:18px;
-      text-align:center;
-      letter-spacing:2px;
-      margin:10px 0 0;
-      user-select:all;
-      word-break:break-word;
+    .s-ok{ color:#86efac; }
+    .s-warn{ color:#fde68a; }
+    .kv{
+      font-size: 14px;
+      line-height: 1.8;
     }
-    .hint{
-      font-size:13px;
-      opacity:.75;
-      margin-top:8px;
-      line-height:1.6;
-    }
-    form{ margin:0; }
-    .btn-primary{
-      width:100%;
-      margin-top:12px;
-      background:#2563eb;
-      border-color: rgba(37,99,235,.65);
-    }
-    .btn-primary:hover{ background:#1d4ed8; }
-
-    .btn-danger{
-      width:100%;
-      margin-top:10px;
-      background:#ef4444;
-      border-color: rgba(239,68,68,.65);
-    }
-    .btn-danger:hover{ background:#dc2626; }
-
-    .flash{
-      margin:0 0 12px 0;
-      padding:10px 12px;
-      border-radius:12px;
-      background:rgba(255,255,255,.06);
-      border:1px solid rgba(255,255,255,.10);
-      text-align:center;
-      font-weight:700;
-      font-size:14px;
-    }
-    .flash.success{ border-color: rgba(34,197,94,.35); }
-    .flash.error{ border-color: rgba(239,68,68,.35); }
+    .kv b{ color:#fff; }
   </style>
 </head>
 
 <body>
   <div class="wrap">
-
-    <div class="top-actions">
-      <a class="btn" href="{{ url_for('index') }}">
-        {% if session.get('lang','ar') == 'en' %}⬅ Back to Dashboard{% else %}⬅ الرجوع للمنصة{% endif %}
-      </a>
-
-      <a class="btn" href="{{ url_for('toggle_language') }}">
-        🌐 {% if session.get('lang','ar') == 'en' %}العربية{% else %}English{% endif %}
-      </a>
-    </div>
-
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        {% for category, message in messages %}
-          <div class="flash {{ category }}">{{ message }}</div>
-        {% endfor %}
-      {% endif %}
-    {% endwith %}
-
     <div class="card">
-      <h1>
-        {% if session.get('lang','ar') == 'en' %}
-          🔗 Link Telegram with your Platform Account
-        {% else %}
-          🔗 ربط حساب Telegram بحساب المنصة
-        {% endif %}
-      </h1>
+      <div class="top">
+        <h1 class="title">
+          {% if session.get('lang') == 'en' %}🔗 Link Telegram{% else %}🔗 ربط تيليجرام{% endif %}
+        </h1>
 
-      <p class="sub">
-        {% if session.get('lang','ar') == 'en' %}
-          This page generates a temporary linking code to connect your Telegram account to your platform session.
-        {% else %}
-          هذه الصفحة تولّد لك كود مؤقّت لربط حسابك في Telegram بحسابك داخل جلسة المنصة.
-        {% endif %}
-      </p>
+        <a class="btn" href="{{ url_for('index') }}"></a>
+          {% if session.get('lang') == 'en' %}⬅ Back{% else %}⬅ الرجوع{% endif %}
+        </a>
+      </div>
 
-      <div class="grid">
-
-        <!-- Steps box -->
-        <div class="box">
-          <h3>
-            {% if session.get('lang','ar') == 'en' %}
-              🧭 Linking Steps
-            {% else %}
-              🧭 خطوات الربط
-            {% endif %}
-          </h3>
-
-          <ol class="steps">
-            <li>
-              {% if session.get('lang','ar') == 'en' %}
-                Open our Telegram bot.
-              {% else %}
-                افتح بوت Telegram الخاص بنا.
+      {% if tg_link %}
+        <div class="status s-ok">
+          ✅ {% if session.get('lang') == 'en' %}Linked{% else %}مرتبط{% endif %}
+        </div>
+        <div class="row">
+          <div class="box">
+            <div class="label">
+              {% if session.get('lang') == 'en' %}Linked Telegram account{% else %}حساب تيليجرام المرتبط{% endif %}
+            </div>
+            <div class="kv">
+              <div>🆔 <b>Telegram ID:</b> {{ tg_link.telegram_id if tg_link.telegram_id is defined else tg_link['telegram_id'] }}</div>
+              {% set tg_u = (tg_link.username if tg_link.username is defined else tg_link['username']) %}
+              {% if tg_u %}
+                <div>👤 <b>Username:</b> @{{ tg_u }}</div>
               {% endif %}
-            </li>
-            <li>
-              {% if session.get('lang','ar') == 'en' %}
-                Press /start, then choose “Link Account”.
-              {% else %}
-                اضغط /start ثم اختر “ربط الحساب”.
-              {% endif %}
-            </li>
-            <li>
-              {% if session.get('lang','ar') == 'en' %}
-                Come back here and click “Generate link code”.
-              {% else %}
-                ارجع هنا واضغط “توليد كود ربط”.
-              {% endif %}
-            </li>
-            <li>
-              {% if session.get('lang','ar') == 'en' %}
-                Copy the code and send it to the bot.
-              {% else %}
-                انسخ الكود وأرسله للبوت.
-              {% endif %}
-            </li>
-          </ol>
-
-          {% if linked_telegram_id %}
-            <div class="status ok">
-              ✅
-              {% if session.get('lang','ar') == 'en' %}
-                Linked (Telegram ID: {{ linked_telegram_id }})
-              {% else %}
-                مرتبط (Telegram ID: {{ linked_telegram_id }})
+              {% set la = (tg_link.linked_at if tg_link.linked_at is defined else tg_link['linked_at']) %}
+              {% if la %}
+                <div>🕒 <b>{% if session.get('lang') == 'en' %}Linked at{% else %}تاريخ الربط{% endif %}:</b> {{ la }}</div>
               {% endif %}
             </div>
-          {% else %}
-            <div class="status warn">
-              ⚠️
-              {% if session.get('lang','ar') == 'en' %}
-                Not linked yet
-              {% else %}
-                غير مرتبط
-              {% endif %}
-            </div>
-          {% endif %}
+          </div>
 
-          <div class="hint">
-            {% if session.get('lang','ar') == 'en' %}
-              After linking, the bot can send you platform notifications, and you can confirm actions faster.
-            {% else %}
-              بعد الربط سيُمكن للبوت إرسال إشعارات المنصة لك، وتسهيل بعض العمليات لاحقًا.
-            {% endif %}
+          <div class="box">
+            <div class="label">
+              {% if session.get('lang') == 'en' %}Unlink{% else %}إلغاء الربط{% endif %}
+            </div>
+            <p class="muted">
+              {% if session.get('lang') == 'en' %}
+              If you unlink, auto referral cashouts to your platform balance will stop until you link again.
+              {% else %}
+              عند إلغاء الربط ستتوقف التحويلات التلقائية لمكافآت الإحالة إلى رصيدك في المنصة حتى تعيد الربط.
+              {% endif %}
+            </p>
+
+            <form action="{{ url_for('unlink_telegram') }}" method="POST" onsubmit="return confirm('{{ 'Are you sure?' if session.get('lang')=='en' else 'هل أنت متأكد؟' }}');">
+              <button class="btn btn-danger" type="submit">
+                {% if session.get('lang') == 'en' %}🚫 Unlink Telegram{% else %}🚫 إلغاء ربط تيليجرام{% endif %}
+              </button>
+            </form>
           </div>
         </div>
 
-        <!-- Code box -->
-        <div class="box">
-          <h3>
-            {% if session.get('lang','ar') == 'en' %}
-              🔐 Link Code
-            {% else %}
-              🔐 كود الربط
-            {% endif %}
-          </h3>
-
-          {% if code %}
-            <div class="code">{{ code }}</div>
-            <div class="hint">
-              {% if session.get('lang','ar') == 'en' %}
-                This code is valid for 10 minutes. Send it to the bot exactly as shown.
-              {% else %}
-                هذا الكود صالح لمدة 10 دقائق. أرسله إلى البوت كما هو تمامًا.
-              {% endif %}
-            </div>
-          {% else %}
-            <div class="hint">
-              {% if session.get('lang','ar') == 'en' %}
-                Click the button below to generate a new code.
-              {% else %}
-                اضغط الزر بالأسفل لتوليد كود جديد.
-              {% endif %}
-            </div>
-          {% endif %}
-
-          <form method="POST" action="{{ url_for('link_telegram') }}">
-            <button class="btn btn-primary" type="submit">
-              {% if session.get('lang','ar') == 'en' %}
-                Generate link code (10 min)
-              {% else %}
-                ⭐ توليد كود ربط (10 دقائق)
-              {% endif %}
-            </button>
-          </form>
-
-          {% if linked_telegram_id %}
-            <form method="POST" action="{{ url_for('unlink_telegram') }}">
-              <button class="btn btn-danger" type="submit">
-                {% if session.get('lang','ar') == 'en' %}
-                  Unlink Telegram
-                {% else %}
-                  ❌ إلغاء الربط
-                {% endif %}
-              </button>
-            </form>
-          {% endif %}
+      {% else %}
+        <div class="status s-warn">
+          ⚠️ {% if session.get('lang') == 'en' %}Not linked{% else %}غير مرتبط{% endif %}
         </div>
 
-      </div>
+        <div class="row">
+          <div class="box">
+            <div class="label">
+              {% if session.get('lang') == 'en' %}How to link{% else %}خطوات الربط{% endif %}
+            </div>
+
+            <p class="muted">
+              {% if session.get('lang') == 'en' %}
+1) Open our Telegram bot
+2) Press Start (or open the menu)
+3) Generate a link code here
+4) Send the code to the bot (example: {{ link_code_prefix }}XXXXXXX)
+              {% else %}
+1) افتح بوت تيليجرام الخاص بنا
+2) اضغط Start أو افتح القائمة
+3) ولّد كود ربط من هنا
+4) أرسل الكود للبوت (مثال: {{ link_code_prefix }}XXXXXXX)
+              {% endif %}
+            </p>
+          </div>
+
+          <div class="box">
+            <div class="label">
+              {% if session.get('lang') == 'en' %}Link code{% else %}كود الربط{% endif %}
+            </div>
+
+            {% if active_code %}
+              <div class="code">
+                <span id="linkCode">{{ active_code.code if active_code.code is defined else active_code['code'] }}</span>
+                <button class="copy" type="button" onclick="copyCode()">
+                  {% if session.get('lang') == 'en' %}Copy{% else %}نسخ{% endif %}
+                </button>
+              </div>
+              <p class="muted" style="margin-top:10px;">
+                ⏳ {% if session.get('lang') == 'en' %}Expires at{% else %}ينتهي في{% endif %}:
+                {{ active_code.expires_at if active_code.expires_at is defined else active_code['expires_at'] }}
+              </p>
+            {% else %}
+              <p class="muted">
+                {% if session.get('lang') == 'en' %}
+No active code yet. Click the button below to generate one.
+                {% else %}
+لا يوجد كود حالي. اضغط الزر بالأسفل لتوليد كود جديد.
+                {% endif %}
+              </p>
+            {% endif %}
+
+            <form action="{{ url_for('generate_telegram_link_code') }}" method="POST" style="margin-top:12px;">
+              <button class="btn" type="submit">
+                {% if session.get('lang') == 'en' %}✨ Generate link code{% else %}✨ توليد كود ربط{% endif %}
+              </button>
+            </form>
+          </div>
+        </div>
+      {% endif %}
     </div>
   </div>
+
+  <script>
+    function copyCode(){
+      const el = document.getElementById('linkCode');
+      if(!el) return;
+      const text = el.textContent || '';
+      navigator.clipboard.writeText(text);
+      alert("{{ 'Copied!' if session.get('lang')=='en' else 'تم النسخ!' }}");
+    }
+  </script>
 </body>
 </html>
