@@ -791,50 +791,80 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
 
 def redeem_telegram_link_code(telegram_id: int, code_raw: str):
     """
-    يربط telegram_id بحساب منصة عبر الكود.
+    يحاول ربط telegram_id بحساب منصة عبر الكود.
+    يقبل: LNK-XXXXXXXX أو XXXXXXXX
     يرجع (success: bool, info/message: str)
     - عند النجاح يرجع platform_user_id كنص في info.
     """
     if not telegram_id or not code_raw:
         return False, "بيانات غير مكتملة."
 
-    code = code_raw.strip().upper()
-    if not code.startswith(LINK_CODE_PREFIX):
+    raw = (code_raw or "").strip().upper()
+
+    # حول دائماً إلى 8 حروف (بدون LNK-)
+    if raw.startswith(LINK_CODE_PREFIX):
+        raw = raw[len(LINK_CODE_PREFIX):].strip()
+
+    if not re.fullmatch(r"[A-Z0-9]{8}", raw):
         return False, "صيغة الكود غير صحيحة."
 
+    code = raw
+    code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+
     db = get_db()
-    now_dt = datetime.now(timezone.utc)
-    now_iso = now_dt.isoformat()
+    now = _now_str()
 
     try:
-        # تأكد أن هذا التليجرام غير مربوط مسبقاً
+        # تأكد أن حساب Telegram غير مربوط مسبقاً
         row_tg = db.execute(
             _sql("SELECT platform_user_id FROM telegram_users WHERE telegram_id = ?"),
             (telegram_id,),
         ).fetchone()
+
         if row_tg and row_tg.get("platform_user_id"):
             return False, "هذا الحساب مربوط مسبقاً."
 
         if USE_POSTGRES:
-            # ✅ عملية ذرّية: تحديث الكود (غير مستعمل + غير منتهي) ثم نأخذ user id
-            # نستخدم COALESCE لأن جدولك فيه user_id و platform_user_id معًا
-            r = db.execute(
-                _sql("""
-                    UPDATE telegram_link_codes
-                    SET used_at = ?, used_by_telegram_id = ?
-                    WHERE code = ?
-                      AND used_at IS NULL
-                      AND expires_at::timestamptz > now()
-                    RETURNING COALESCE(platform_user_id, user_id) AS platform_user_id
-                """),
-                (now_iso, telegram_id, code),
-            ).fetchone()
+            cur = db.cursor()
+
+            has_code = _pg_column_exists(cur, "telegram_link_codes", "code")
+            has_code_hash = _pg_column_exists(cur, "telegram_link_codes", "code_hash")
+
+            # لازم واحد منهم على الأقل
+            if not has_code and not has_code_hash:
+                return False, "سكيما جدول الأكواد غير مكتملة (لا يوجد code ولا code_hash)."
+
+            # شرط المطابقة حسب الأعمدة المتاحة
+            match_cond = []
+            params = []
+
+            if has_code:
+                match_cond.append("code = %s")
+                params.append(code)
+
+            if has_code_hash:
+                match_cond.append("code_hash = %s")
+                params.append(code_hash)
+
+            match_sql = "(" + " OR ".join(match_cond) + ")"
+
+            # UPDATE آمن ضد الاستخدام المزدوج + صلاحية الكود
+            sql = f"""
+                UPDATE telegram_link_codes
+                SET used_at = %s, used_by_telegram_id = %s
+                WHERE {match_sql}
+                  AND used_at IS NULL
+                  AND expires_at > %s
+                RETURNING platform_user_id
+            """
+
+            params = [now, telegram_id] + params + [now]
+            r = db.execute(_sql(sql), tuple(params)).fetchone()
 
             if not r:
-                db.rollback()
                 return False, "الكود غير صحيح أو منتهي أو مستعمل."
 
-            platform_user_id = int(r["platform_user_id"])
+            platform_user_id = r["platform_user_id"]
 
             # اربط في telegram_users
             db.execute(
@@ -843,42 +873,30 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
                     SET platform_user_id = ?, linked_at = ?
                     WHERE telegram_id = ?
                 """),
-                (platform_user_id, now_iso, telegram_id),
+                (platform_user_id, now, telegram_id),
             )
 
             db.commit()
             return True, str(platform_user_id)
 
-        # SQLite fallback
+        # SQLite (نفترض code موجود)
         row = db.execute(
             _sql("""
-                SELECT platform_user_id, user_id, expires_at, used_at
+                SELECT platform_user_id, expires_at, used_at, code
                 FROM telegram_link_codes
                 WHERE code = ?
-                LIMIT 1
             """),
             (code,),
         ).fetchone()
 
         if not row:
             return False, "الكود غير صحيح."
-
         if row.get("used_at"):
             return False, "هذا الكود مستعمل مسبقاً."
-
-        # مقارنة مبسطة (يفضل أن تكون نفس صيغة التخزين)
-        expires_at_raw = row.get("expires_at")
-        try:
-            exp = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
-        except Exception:
-            exp = datetime.strptime(str(expires_at_raw)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-
-        if exp <= now_dt:
+        if row.get("expires_at") <= now:
             return False, "هذا الكود منتهي."
 
-        platform_user_id = row.get("platform_user_id") or row.get("user_id")
-        if not platform_user_id:
-            return False, "خطأ في بيانات الكود."
+        platform_user_id = row["platform_user_id"]
 
         db.execute(
             _sql("""
@@ -886,7 +904,7 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
                 SET used_at = ?, used_by_telegram_id = ?
                 WHERE code = ? AND used_at IS NULL
             """),
-            (now_iso, telegram_id, code),
+            (now, telegram_id, code),
         )
 
         db.execute(
@@ -895,21 +913,21 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
                 SET platform_user_id = ?, linked_at = ?
                 WHERE telegram_id = ?
             """),
-            (int(platform_user_id), now_iso, telegram_id),
+            (platform_user_id, now, telegram_id),
         )
 
         db.commit()
-        return True, str(int(platform_user_id))
+        return True, str(platform_user_id)
 
     except Exception as e:
         logging.error("redeem_telegram_link_code error: %s", e)
         try:
-            if USE_POSTGRES:
-                db.rollback()
+            if USE_POSTGRES and hasattr(db, "_conn"):
+                db._conn.rollback()
         except Exception:
             pass
         return False, "❌ حدث خطأ أثناء الربط. حاول مرة أخرى."
-
+        
 # ==============================
 # ✅ (NEW) Auto cashout referrals to platform when >= 1$
 # ==============================
@@ -1912,44 +1930,39 @@ def telegram_webhook():
 
         register_telegram_user(from_user, start_param)
         
-        # ✅ (NEW) إذا أرسل كود ربط (مع LNK- أو بدونها)
-        raw = (text or "").strip().upper()
+        # ✅ (NEW) إذا أرسل كود ربط (LNK-XXXXXXX أو XXXXXXXX)
+raw = (text or "").strip().upper()
 
-        is_prefixed = raw.startswith(LINK_CODE_PREFIX)
-        is_plain = bool(re.fullmatch(r"[A-Z0-9]{8}", raw))  # مثل: TOKQDROU
+is_prefixed = raw.startswith(LINK_CODE_PREFIX)
+is_plain = bool(re.fullmatch(r"[A-Z0-9]{8}", raw))  # مثل: 5CE92V5R
 
-        if is_prefixed or is_plain:
-            code_to_redeem = raw if is_prefixed else f"{LINK_CODE_PREFIX}{raw}"
+if is_prefixed or is_plain:
+    ok, info = redeem_telegram_link_code(from_user.get("id"), raw)
 
-            ok, info = redeem_telegram_link_code(from_user.get("id"), code_to_redeem)
-            if ok:
-                platform_user_id = int(info)
-                uname = ""
-                try:
-                    db = get_db()
-                    urow = db.execute(
-                        _sql("SELECT username FROM users WHERE id = ?"),
-                        (platform_user_id,)
-                    ).fetchone()
-                    if urow:
-                        uname = urow["username"]
-                except Exception:
-                    pass
+    if ok:
+        platform_user_id = int(info)
+        uname = ""
+        try:
+            db = get_db()
+            urow = db.execute(_sql("SELECT username FROM users WHERE id = ?"), (platform_user_id,)).fetchone()
+            if urow:
+                uname = urow["username"]
+        except Exception:
+            pass
 
-                tg_send_message(
-                    chat_id,
-                    "✅ تم ربط حسابك بنجاح.\n"
-                    + (f"👤 حساب المنصة: <b>{uname}</b>" if uname else "")
-                )
+        tg_send_message(
+            chat_id,
+            "✅ تم ربط حسابك بنجاح.\n" + (f"👤 حساب المنصة: <b>{uname}</b>" if uname else "")
+        )
 
-                try:
-                    apply_referral_auto_cashout_for_telegram(from_user.get("id"))
-                except Exception:
-                    pass
-            else:
-                tg_send_message(chat_id, f"❌ {info}")
+        try:
+            apply_referral_auto_cashout_for_telegram(from_user.get("id"))
+        except Exception:
+            pass
+    else:
+        tg_send_message(chat_id, f"❌ {info}")
 
-            return "ok", 200
+    return "ok", 200
 
         if text.startswith("/start"):
             tg_id = from_user.get("id")
