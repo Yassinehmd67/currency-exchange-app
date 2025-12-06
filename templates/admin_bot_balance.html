@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>إدارة رصيد البوت</title>
+  <style>
+    body{font-family:system-ui;background:#0b1220;color:#e7eefc;margin:0;padding:20px}
+    .card{background:#101a2e;border:1px solid #1f2a44;border-radius:14px;padding:16px;margin-bottom:14px}
+    input,button,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #2b3a5f;background:#0c1528;color:#e7eefc}
+    button{cursor:pointer}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .muted{opacity:.75}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px;border-bottom:1px solid #243254;text-align:right}
+    .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#1b2a49}
+    .ok{background:#123b24}
+    .bad{background:#3b1212}
+    a{color:#8ab4ff;text-decoration:none}
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <h2>🧾 إدارة رصيد البوت (Telegram)</h2>
+    <div class="muted">ابحث بـ Telegram ID ثم نفّذ إضافة/خصم، وسيتم تسجيل العملية في ledger.</div>
+  </div>
+
+  <div class="card">
+    <form method="get" action="{{ url_for('admin_bot_balance') }}">
+      <div class="row">
+        <div>
+          <label>Telegram ID</label>
+          <input name="telegram_id" value="{{ tg_id }}" placeholder="مثال: 6301595009">
+        </div>
+        <div style="display:flex;align-items:end">
+          <button type="submit">🔎 بحث</button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  {% if tg_id and not tg_user %}
+    <div class="card">
+      <div class="pill bad">⚠️ لم يتم العثور على هذا Telegram ID داخل telegram_users</div>
+      <p class="muted">اطلب من المستخدم إرسال الأمر /start للبوت أولاً.</p>
+    </div>
+  {% endif %}
+
+  {% if tg_user %}
+    <div class="card">
+      <h3>👤 بيانات المستخدم</h3>
+      <p>Telegram ID: <b>{{ tg_user.telegram_id }}</b></p>
+      <p>Username: <b>{{ tg_user.username or '-' }}</b></p>
+      <p>Platform User ID: <b>{{ tg_user.platform_user_id or '-' }}</b></p>
+      <p>Bot Balance USD: <b>{{ '%.2f'|format(tg_user.bot_balance_usd or 0) }}$</b></p>
+    </div>
+
+    <div class="card">
+      <h3>➕➖ إضافة / خصم</h3>
+      <form method="post" action="{{ url_for('admin_bot_balance') }}">
+        <input type="hidden" name="telegram_id" value="{{ tg_user.telegram_id }}">
+
+        <div class="row">
+          <div>
+            <label>المبلغ بالدولار</label>
+            <input name="amount_usd" placeholder="مثال: 10">
+          </div>
+          <div>
+            <label>ملاحظة (اختياري)</label>
+            <input name="note" placeholder="سبب العملية / رقم طلب ...">
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:10px">
+          <button name="action" value="credit">✅ إضافة رصيد</button>
+          <button name="action" value="debit">❌ خصم رصيد</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>📚 آخر 25 عملية</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>النوع</th>
+            <th>المبلغ</th>
+            <th>ملاحظة</th>
+            <th>الوقت</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in ledger_rows %}
+            <tr>
+              <td>{{ r.id }}</td>
+              <td>{{ r.direction }}</td>
+              <td>{{ '%.2f'|format(r.amount_usd or 0) }}$</td>
+              <td>{{ r.note or '-' }}</td>
+              <td>{{ r.created_at }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="muted">لا توجد عمليات بعد.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <a href="{{ url_for('index') }}">↩️ الرجوع</a>
+  </div>
+
+</body>
+</html>

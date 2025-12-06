@@ -74,6 +74,13 @@ SITE_PUBLIC_URL = os.getenv(
     "https://currency-exchange-app-2ymh.onrender.com"
 )
 
+# ==============================
+# Telegram Linking + Bot Wallet settings
+# ==============================
+LINK_CODE_PREFIX = os.getenv("LINK_CODE_PREFIX", "LNK-").strip().upper()
+BOT_TOPUP_FIXED_USD = float(os.getenv("BOT_TOPUP_FIXED_USD", "10"))
+BOT_MIN_CASHOUT_USD = float(os.getenv("BOT_MIN_CASHOUT_USD", "1"))
+
 # مكافآت الإحالات (Telegram)
 REF_L1_BONUS_USD = float(os.getenv("REF_L1_BONUS_USD", "0.01"))   # مباشر
 REF_L2_BONUS_USD = float(os.getenv("REF_L2_BONUS_USD", "0.003"))  # غير مباشر مستوى واحد فقط
@@ -186,6 +193,27 @@ def get_db():
             g.db = sqlite3.connect(DB_PATH)
             g.db.row_factory = sqlite3.Row
     return g.db
+
+def _pg_column_exists(cur, table_name: str, column_name: str) -> bool:
+    """
+    Postgres: يتحقق هل عمود موجود داخل جدول أم لا.
+    مهم لتوافق السكيما القديمة والجديدة بدون كسر.
+    """
+    cur.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = %s AND column_name = %s
+        LIMIT 1
+        """,
+        (table_name, column_name),
+    )
+    return cur.fetchone() is not None
+
+
+def _now_str() -> str:
+    # UTC time string ثابتة
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 # ==============================
 # Helpers: Postgres column check
@@ -310,6 +338,42 @@ def init_db():
         );
         """)
 
+        # ✅ (NEW) platform ↔ telegram linking (Postgres upgrades)
+
+        # 1) telegram_users: أعمدة الربط + رصيد البوت
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS linked_at TEXT;")
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS bot_balance_usd DOUBLE PRECISION DEFAULT 0;")
+
+        # 2) telegram_link_codes: إنشاء الجدول إن لم يوجد (بأقل قيود حتى لا نكسر سكيما قديمة)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_link_codes (
+            id BIGSERIAL PRIMARY KEY,
+            platform_user_id BIGINT,
+            code TEXT,
+            code_hash TEXT,
+            expires_at TEXT,
+            used_at TEXT,
+            used_by_telegram_id BIGINT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
+        );
+        """)
+
+        # 3) ترقية الجدول إن كان موجود بسكيما قديمة
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code TEXT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code_hash TEXT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS expires_at TEXT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS used_at TEXT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS used_by_telegram_id BIGINT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS created_at TEXT;")
+
+        # 4) Unique/Indexes (ضرورية لسرعة البحث + منع تكرارات)
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tlc_code ON telegram_link_codes(code);")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tlc_code_hash ON telegram_link_codes(code_hash);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_platform_user_id ON telegram_link_codes(platform_user_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_expires_at ON telegram_link_codes(expires_at);")
+
     # ✅ (NEW) platform ↔ telegram linking (Postgres upgrades)
         # 1) telegram_users: أعمدة الربط
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
@@ -341,6 +405,16 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_platform_user_id ON telegram_link_codes(platform_user_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_user_id ON telegram_link_codes(user_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_expires_at ON telegram_link_codes(expires_at);")
+
+        # ✅ (NEW) telegram_users: رصيد البوت (يخصم منه أولا قبل رصيد الإحالات)
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS bot_balance_usd DOUBLE PRECISION DEFAULT 0;")
+        # ✅ (NEW) SQLite: bot_balance_usd
+
+        # ✅ (NEW) SQLite: bot_balance_usd
+        try:
+            cur.execute("ALTER TABLE telegram_users ADD COLUMN bot_balance_usd REAL DEFAULT 0;")
+        except Exception:
+            pass
 
         db.commit()
         db.close()
@@ -689,12 +763,9 @@ def _generate_link_code(length=8):
 def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) -> str:
     db = get_db()
 
-    now = datetime.now(timezone.utc)
-    expires_at_dt = now + timedelta(minutes=minutes_valid)
-
-    # نخزن بصيغة ISO (تشتغل ممتاز في Neon/Render) وتتفادى مشاكل المقارنة
-    expires_at = expires_at_dt.isoformat()
-    created_at = now.isoformat()
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(minutes=minutes_valid)
+    ).strftime("%Y-%m-%d %H:%M:%S")
 
     alphabet = string.ascii_uppercase + string.digits
     attempts = 25
@@ -706,32 +777,17 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
 
         try:
             if USE_POSTGRES:
+                # اكتشاف اسم عمود المستخدم (user_id القديم أو platform_user_id الجديد)
                 cur = db.cursor()
-
-                # أعمدة قديمة/جديدة
                 has_user_id = _pg_column_exists(cur, "telegram_link_codes", "user_id")
-                has_platform_user_id = _pg_column_exists(cur, "telegram_link_codes", "platform_user_id")
+                user_col = "user_id" if has_user_id else "platform_user_id"
+
+                # اكتشاف الأعمدة الموجودة (code / code_hash)
                 has_code = _pg_column_exists(cur, "telegram_link_codes", "code")
                 has_code_hash = _pg_column_exists(cur, "telegram_link_codes", "code_hash")
-                has_created_at = _pg_column_exists(cur, "telegram_link_codes", "created_at")
 
-                cols = []
-                vals = []
-
-                # ✅ املأ الاثنين إن وُجِدا (لمنع NOT NULL على السكيما القديمة)
-                if has_user_id:
-                    cols.append("user_id")
-                    vals.append(platform_user_id)
-                if has_platform_user_id:
-                    cols.append("platform_user_id")
-                    vals.append(platform_user_id)
-
-                cols.append("expires_at")
-                vals.append(expires_at)
-
-                if has_created_at:
-                    cols.append("created_at")
-                    vals.append(created_at)
+                cols = [user_col, "expires_at"]
+                vals = [platform_user_id, expires_at]
 
                 if has_code:
                     cols.append("code")
@@ -744,6 +800,7 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
                 cols_sql = ", ".join(cols)
                 ph_sql = ", ".join(["?"] * len(vals))
 
+                # بدون تحديد target داخل ON CONFLICT حتى يشتغل مع UNIQUE(code) أو UNIQUE(code_hash)
                 row = db.execute(
                     _sql(f"""
                         INSERT INTO telegram_link_codes ({cols_sql})
@@ -761,7 +818,7 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
                 db.commit()
                 continue
 
-            # SQLite (قد لا تستخدمه عندك الآن، لكن نتركه كما هو)
+            # SQLite
             cur2 = db.execute(
                 """
                 INSERT OR IGNORE INTO telegram_link_codes (platform_user_id, code, expires_at)
@@ -777,13 +834,10 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
             last_err = str(e)
             logging.warning("create_telegram_link_code attempt failed: %s", e)
 
-            # مهم في Postgres: rollback حتى لا تبقى transaction aborted
+            # Postgres: لازم rollback على الاتصال الحقيقي
             try:
-                if USE_POSTGRES:
-                    if hasattr(db, "rollback"):
-                        db.rollback()
-                    elif hasattr(db, "_conn"):
-                        db._conn.rollback()
+                if USE_POSTGRES and hasattr(db, "_conn"):
+                    db._conn.rollback()
             except Exception:
                 pass
 
@@ -792,81 +846,89 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
 def redeem_telegram_link_code(telegram_id: int, code_raw: str):
     """
     يحاول ربط telegram_id بحساب منصة عبر الكود.
-    يقبل: LNK-XXXXXXXX أو XXXXXXXX
     يرجع (success: bool, info/message: str)
     - عند النجاح يرجع platform_user_id كنص في info.
     """
     if not telegram_id or not code_raw:
         return False, "بيانات غير مكتملة."
 
-    raw = (code_raw or "").strip().upper()
+    raw = code_raw.strip().upper()
 
-    # حول دائماً إلى 8 حروف (بدون LNK-)
+    # يقبل: LNK-XXXXXXXX أو XXXXXXXX
     if raw.startswith(LINK_CODE_PREFIX):
-        raw = raw[len(LINK_CODE_PREFIX):].strip()
+        code = raw
+        plain = raw[len(LINK_CODE_PREFIX):]
+    else:
+        code = f"{LINK_CODE_PREFIX}{raw}"
+        plain = raw
 
-    if not re.fullmatch(r"[A-Z0-9]{8}", raw):
+    if not re.fullmatch(r"[A-Z0-9]{8}", plain or ""):
         return False, "صيغة الكود غير صحيحة."
 
-    code = raw
-    code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
-
-    db = get_db()
     now = _now_str()
+    db = get_db()
 
+    # تأكد أن هذا التليجرام غير مربوط مسبقاً
     try:
-        # تأكد أن حساب Telegram غير مربوط مسبقاً
         row_tg = db.execute(
             _sql("SELECT platform_user_id FROM telegram_users WHERE telegram_id = ?"),
             (telegram_id,),
         ).fetchone()
-
-        if row_tg and row_tg.get("platform_user_id"):
+        if row_tg and (row_tg.get("platform_user_id") if isinstance(row_tg, dict) else row_tg["platform_user_id"]):
             return False, "هذا الحساب مربوط مسبقاً."
+    except Exception:
+        pass
 
-        if USE_POSTGRES:
+    # Postgres: UPDATE..RETURNING (آمن ضد الاستخدام المزدوج)
+    if USE_POSTGRES:
+        try:
+            # قد تكون السكيما تعتمد code أو code_hash -> سنحاول بالـ code أولاً
             cur = db.cursor()
-
+            has_user_id = _pg_column_exists(cur, "telegram_link_codes", "user_id")
+            user_col = "user_id" if has_user_id else "platform_user_id"
             has_code = _pg_column_exists(cur, "telegram_link_codes", "code")
             has_code_hash = _pg_column_exists(cur, "telegram_link_codes", "code_hash")
 
-            # لازم واحد منهم على الأقل
-            if not has_code and not has_code_hash:
-                return False, "سكيما جدول الأكواد غير مكتملة (لا يوجد code ولا code_hash)."
-
-            # شرط المطابقة حسب الأعمدة المتاحة
-            match_cond = []
-            params = []
+            # جهز شروط المطابقة حسب الأعمدة المتاحة
+            where_parts = ["used_at IS NULL", "expires_at > ?"]
+            params = [now]
 
             if has_code:
-                match_cond.append("code = %s")
-                params.append(code)
+                where_parts.insert(0, "code = ?")
+                params.insert(0, plain)  # نخزن plain غالباً بدون prefix داخل code
+            elif has_code_hash:
+                where_parts.insert(0, "code_hash = ?")
+                params.insert(0, hashlib.sha256(plain.encode("utf-8")).hexdigest())
+            else:
+                return False, "سكيما الأكواد غير مكتملة (لا code ولا code_hash)."
 
-            if has_code_hash:
-                match_cond.append("code_hash = %s")
-                params.append(code_hash)
+            where_sql = " AND ".join(where_parts)
 
-            match_sql = "(" + " OR ".join(match_cond) + ")"
-
-            # UPDATE آمن ضد الاستخدام المزدوج + صلاحية الكود
-            sql = f"""
-                UPDATE telegram_link_codes
-                SET used_at = %s, used_by_telegram_id = %s
-                WHERE {match_sql}
-                  AND used_at IS NULL
-                  AND expires_at > %s
-                RETURNING platform_user_id
-            """
-
-            params = [now, telegram_id] + params + [now]
-            r = db.execute(_sql(sql), tuple(params)).fetchone()
+            r = db.execute(
+                _sql(f"""
+                    UPDATE telegram_link_codes
+                    SET used_at = ?, used_by_telegram_id = ?
+                    WHERE {where_sql}
+                    RETURNING {user_col}
+                """),
+                (now, telegram_id, *params),
+            ).fetchone()
 
             if not r:
                 return False, "الكود غير صحيح أو منتهي أو مستعمل."
 
-            platform_user_id = r["platform_user_id"]
+            platform_user_id = r[user_col]
 
-            # اربط في telegram_users
+            # اربط في telegram_users (تأكد من وجود السجل)
+            db.execute(
+                _sql("""
+                    INSERT INTO telegram_users (telegram_id, referral_credits_usd, bot_balance_usd, created_at)
+                    VALUES (?, 0, 0, ?)
+                    ON CONFLICT (telegram_id) DO NOTHING
+                """),
+                (telegram_id, now),
+            )
+
             db.execute(
                 _sql("""
                     UPDATE telegram_users
@@ -879,10 +941,20 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
             db.commit()
             return True, str(platform_user_id)
 
-        # SQLite (نفترض code موجود)
+        except Exception as e:
+            logging.error("redeem_telegram_link_code pg error: %s", e)
+            try:
+                if hasattr(db, "_conn"):
+                    db._conn.rollback()
+            except Exception:
+                pass
+            return False, "حدث خطأ أثناء الربط."
+
+    # SQLite: SELECT ثم UPDATE
+    try:
         row = db.execute(
             _sql("""
-                SELECT platform_user_id, expires_at, used_at, code
+                SELECT platform_user_id, expires_at, used_at
                 FROM telegram_link_codes
                 WHERE code = ?
             """),
@@ -891,12 +963,12 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
 
         if not row:
             return False, "الكود غير صحيح."
-        if row.get("used_at"):
+        if (row.get("used_at") if isinstance(row, dict) else row["used_at"]):
             return False, "هذا الكود مستعمل مسبقاً."
-        if row.get("expires_at") <= now:
+        if (row.get("expires_at") if isinstance(row, dict) else row["expires_at"]) <= now:
             return False, "هذا الكود منتهي."
 
-        platform_user_id = row["platform_user_id"]
+        platform_user_id = row["platform_user_id"] if isinstance(row, dict) else row["platform_user_id"]
 
         db.execute(
             _sql("""
@@ -905,6 +977,14 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
                 WHERE code = ? AND used_at IS NULL
             """),
             (now, telegram_id, code),
+        )
+
+        db.execute(
+            """
+            INSERT OR IGNORE INTO telegram_users (telegram_id, referral_credits_usd, bot_balance_usd, created_at)
+            VALUES (?, 0, 0, ?)
+            """,
+            (telegram_id, now),
         )
 
         db.execute(
@@ -920,13 +1000,99 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
         return True, str(platform_user_id)
 
     except Exception as e:
-        logging.error("redeem_telegram_link_code error: %s", e)
-        try:
-            if USE_POSTGRES and hasattr(db, "_conn"):
-                db._conn.rollback()
-        except Exception:
-            pass
-        return False, "❌ حدث خطأ أثناء الربط. حاول مرة أخرى."
+        logging.error("redeem_telegram_link_code sqlite error: %s", e)
+        return False, "حدث خطأ أثناء الربط."
+    
+def get_telegram_wallet(telegram_id: int):
+    """
+    يرجع: bot_balance_usd + referral_credits_usd + platform_user_id (إن وجد)
+    """
+    db = get_db()
+    row = db.execute(
+        _sql("""
+            SELECT telegram_id,
+                   COALESCE(bot_balance_usd, 0) AS bot_balance_usd,
+                   COALESCE(referral_credits_usd, 0) AS referral_credits_usd,
+                   platform_user_id
+            FROM telegram_users
+            WHERE telegram_id = ?
+            LIMIT 1
+        """),
+        (telegram_id,),
+    ).fetchone()
+
+    if not row:
+        return {
+            "telegram_id": telegram_id,
+            "bot_balance_usd": 0.0,
+            "referral_credits_usd": 0.0,
+            "platform_user_id": None,
+        }
+
+    return {
+        "telegram_id": int(row["telegram_id"]),
+        "bot_balance_usd": float(row["bot_balance_usd"] or 0.0),
+        "referral_credits_usd": float(row["referral_credits_usd"] or 0.0),
+        "platform_user_id": row.get("platform_user_id") if isinstance(row, dict) else row["platform_user_id"],
+    }
+
+
+def bot_wallet_total_usd(telegram_id: int) -> float:
+    w = get_telegram_wallet(telegram_id)
+    return float(w["bot_balance_usd"]) + float(w["referral_credits_usd"])
+
+
+def bot_wallet_debit_usd(telegram_id: int, amount: float) -> bool:
+    """
+    يخصم من bot_balance_usd أولاً ثم من referral_credits_usd إذا لزم.
+    يرجع True إذا نجح الخصم، False إذا الرصيد الكلي غير كافي.
+    """
+    amount = float(amount)
+    if amount <= 0:
+        return False
+
+    db = get_db()
+    w = get_telegram_wallet(telegram_id)
+    bot_bal = float(w["bot_balance_usd"])
+    ref_bal = float(w["referral_credits_usd"])
+
+    total = bot_bal + ref_bal
+    if total + 1e-9 < amount:
+        return False
+
+    # خصم من الأساسي أولاً
+    take_from_bot = min(bot_bal, amount)
+    remaining = amount - take_from_bot
+    take_from_ref = remaining if remaining > 0 else 0.0
+
+    db.execute(
+        _sql("""
+            UPDATE telegram_users
+            SET bot_balance_usd = COALESCE(bot_balance_usd, 0) - ?,
+                referral_credits_usd = COALESCE(referral_credits_usd, 0) - ?
+            WHERE telegram_id = ?
+        """),
+        (take_from_bot, take_from_ref, telegram_id),
+    )
+    db.commit()
+    return True
+
+
+def bot_wallet_credit_usd(telegram_id: int, amount: float):
+    amount = float(amount)
+    if amount <= 0:
+        return
+
+    db = get_db()
+    db.execute(
+        _sql("""
+            UPDATE telegram_users
+            SET bot_balance_usd = COALESCE(bot_balance_usd, 0) + ?
+            WHERE telegram_id = ?
+        """),
+        (amount, telegram_id),
+    )
+    db.commit()
 
 # ==============================
 # ✅ (NEW) Auto cashout referrals to platform when >= 1$
@@ -1147,6 +1313,114 @@ def tg_answer_callback(callback_id):
     except Exception as e:
         logging.error(f"Error answering callback: {e}")
 
+def get_telegram_balances(telegram_id: int):
+    db = get_db()
+    row = db.execute(
+        _sql("SELECT bot_balance_usd, referral_credits_usd, platform_user_id FROM telegram_users WHERE telegram_id = ?"),
+        (telegram_id,),
+    ).fetchone()
+    if not row:
+        return None
+    bot_bal = float(row.get("bot_balance_usd") or 0)
+    ref_bal = float(row.get("referral_credits_usd") or 0)
+    platform_user_id = row.get("platform_user_id")
+    return bot_bal, ref_bal, platform_user_id
+
+
+def get_total_bot_balance(telegram_id: int) -> float:
+    info = get_telegram_balances(telegram_id)
+    if not info:
+        return 0.0
+    bot_bal, ref_bal, _ = info
+    return float(bot_bal + ref_bal)
+
+
+def add_to_bot_balance(telegram_id: int, amount: float) -> bool:
+    if not telegram_id or amount <= 0:
+        return False
+    db = get_db()
+    db.execute(
+        _sql("UPDATE telegram_users SET bot_balance_usd = COALESCE(bot_balance_usd, 0) + ? WHERE telegram_id = ?"),
+        (amount, telegram_id),
+    )
+    db.commit()
+    return True
+
+
+def deduct_from_bot_balance_wallet_first(telegram_id: int, amount: float) -> tuple[bool, str]:
+    """
+    يخصم من bot_balance_usd أولا، ثم من referral_credits_usd إن لم يكفِ.
+    يرجع (ok, msg)
+    """
+    if not telegram_id or amount <= 0:
+        return False, "مبلغ غير صالح."
+
+    info = get_telegram_balances(telegram_id)
+    if not info:
+        return False, "حساب Telegram غير موجود."
+
+    bot_bal, ref_bal, _ = info
+    total = bot_bal + ref_bal
+    if total + 1e-9 < amount:
+        return False, "الرصيد غير كافٍ."
+
+    use_bot = min(bot_bal, amount)
+    remaining = amount - use_bot
+    use_ref = remaining  # الباقي نخصمه من الإحالات
+
+    db = get_db()
+    if use_bot > 0:
+        db.execute(
+            _sql("UPDATE telegram_users SET bot_balance_usd = COALESCE(bot_balance_usd, 0) - ? WHERE telegram_id = ?"),
+            (use_bot, telegram_id),
+        )
+    if use_ref > 0:
+        db.execute(
+            _sql("UPDATE telegram_users SET referral_credits_usd = COALESCE(referral_credits_usd, 0) - ? WHERE telegram_id = ?"),
+            (use_ref, telegram_id),
+        )
+    db.commit()
+    return True, "ok"
+
+def transfer_bot_to_platform_by_telegram_id(telegram_id: int, amount: float) -> tuple[bool, str]:
+    if not telegram_id or amount <= 0:
+        return False, "مبلغ غير صالح."
+
+    info = get_telegram_balances(telegram_id)
+    if not info:
+        return False, "هذا المستخدم غير موجود في telegram_users."
+
+    bot_bal, ref_bal, platform_user_id = info
+    if not platform_user_id:
+        return False, "هذا الحساب غير مربوط بحساب منصة."
+
+    ok, msg = deduct_from_bot_balance_wallet_first(telegram_id, amount)
+    if not ok:
+        return False, msg
+
+    db = get_db()
+
+    # إضافة للمنصة (USD): نضمن وجود السطر
+    db.execute(
+        _sql("""
+            INSERT INTO balances (user_id, currency, amount)
+            VALUES (?, ?, ?)
+            ON CONFLICT (user_id, currency) DO UPDATE SET amount = balances.amount + EXCLUDED.amount
+        """),
+        (int(platform_user_id), "USD", amount),
+    )
+
+    # Transaction
+    db.execute(
+        _sql("""
+            INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """),
+        (int(platform_user_id), "transfer_from_bot", amount, "USD", f"from telegram_id={telegram_id}", _now_str()),
+    )
+
+    db.commit()
+    return True, "✅ تم تحويل الرصيد إلى المنصة."
 
 # ==============================
 # المسارات الأساسية (المستخدم)
@@ -1781,7 +2055,47 @@ def admin_deposits():
 
     return render_template("admin_deposits.html", deposits=deposits)
 
+@app.route("/admin/bot_balance", methods=["GET", "POST"])
+def admin_bot_balance():
+    if "username" not in session:
+        return redirect(url_for("login"))
 
+    user = get_user(session["username"])
+    if not user or not user.get("is_admin"):
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        telegram_id = request.form.get("telegram_id", "").strip()
+        amount = request.form.get("amount", "").strip()
+        action = request.form.get("action", "").strip()  # add / deduct
+
+        try:
+            tid = int(telegram_id)
+            amt = float(amount)
+        except Exception:
+            flash("❌ بيانات غير صالحة.", "error")
+            return redirect(url_for("admin_bot_balance"))
+
+        if amt <= 0:
+            flash("❌ المبلغ يجب أن يكون أكبر من 0.", "error")
+            return redirect(url_for("admin_bot_balance"))
+
+        if action == "add":
+            ok = add_to_bot_balance(tid, amt)
+            flash("✅ تمت الإضافة." if ok else "❌ فشلت العملية.", "success" if ok else "error")
+            return redirect(url_for("admin_bot_balance"))
+
+        if action == "deduct":
+            ok, msg = deduct_from_bot_balance_wallet_first(tid, amt)
+            flash("✅ تم الخصم." if ok else f"❌ {msg}", "success" if ok else "error")
+            return redirect(url_for("admin_bot_balance"))
+
+        flash("❌ اختيار غير معروف.", "error")
+        return redirect(url_for("admin_bot_balance"))
+
+    # GET: عرض بسيط
+    return render_template("admin_bot_balance.html")
+    
 # ==============================
 # صفحة الإشعارات للمستخدم
 # ==============================
@@ -1987,6 +2301,7 @@ def telegram_webhook():
                     [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
                     [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
                     [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
+                    [{"text": "💸 تحويل الرصيد / Transfer balance", "callback_data": "transfer_balance"}],
                     [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
                 ]
             }
@@ -1996,7 +2311,7 @@ def telegram_webhook():
 
         tg_send_message(chat_id, "استخدم الأمر /start للحصول على القائمة الرئيسية للبوت.")
         return "ok", 200
-        
+
     # أزرار Inline
     if "callback_query" in update:
         cq = update["callback_query"]
@@ -2041,6 +2356,18 @@ def telegram_webhook():
                 "🧰 <b>الخدمات الفرعية</b>\n\n"
                 "سيتم هنا لاحقًا إضافة أزرار لخدمات إضافية "
                 "مثل: أسعار الصرف، شروحات، أو أدوات أخرى مرتبطة بالمنصة."
+            )
+            tg_send_message(chat_id, msg)
+            return "ok", 200
+        
+        # ✅ (NEW) تحويل الرصيد
+        if data == "transfer_balance":
+            msg = (
+                "💸 <b>تحويل الرصيد</b>\n\n"
+                "حاليًا التحويل يتم من داخل المنصة بعد الربط.\n"
+                "ادخل إلى صفحة ربط تيليجرام، ثم اضغط:\n"
+                "➕ إضافة 10$ إلى رصيد البوت\n\n"
+                "لاحقًا سنضيف اختيار مبلغ + تحويل من البوت إلى المنصة مباشرة."
             )
             tg_send_message(chat_id, msg)
             return "ok", 200
@@ -2175,6 +2502,66 @@ def unlink_telegram():
     db.commit()
     flash("✅ تم إلغاء ربط حساب Telegram.", "success")
     return redirect(url_for("link_telegram"))
+
+@app.route("/transfer_to_bot_10", methods=["POST"])
+def transfer_to_bot_10():
+    if "username" not in session:
+        return redirect(url_for("login"))
+
+    user = get_user(session["username"])
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    amount = 10.0
+    db = get_db()
+
+    # جلب telegram_id المرتبط بهذا المستخدم
+    row = db.execute(
+        _sql("SELECT telegram_id FROM telegram_users WHERE platform_user_id = ? LIMIT 1"),
+        (user["id"],),
+    ).fetchone()
+
+    if not row:
+        flash("❌ يجب ربط حساب Telegram أولاً قبل التحويل.", "error")
+        return redirect(url_for("link_telegram"))
+
+    telegram_id = int(row["telegram_id"])
+
+    # خصم من رصيد المنصة (USD)
+    bal_row = db.execute(
+        _sql("SELECT amount FROM balances WHERE user_id = ? AND currency = ?"),
+        (user["id"], "USD"),
+    ).fetchone()
+
+    current = float(bal_row["amount"]) if bal_row else 0.0
+    if current + 1e-9 < amount:
+        flash("❌ رصيد USD في المنصة غير كافٍ لإضافة 10$ للبوت.", "error")
+        return redirect(url_for("link_telegram"))
+
+    db.execute(
+        _sql("UPDATE balances SET amount = amount - ? WHERE user_id = ? AND currency = ?"),
+        (amount, user["id"], "USD"),
+    )
+
+    # إضافة للبوت (bot_balance_usd)
+    db.execute(
+        _sql("UPDATE telegram_users SET bot_balance_usd = COALESCE(bot_balance_usd, 0) + ? WHERE telegram_id = ?"),
+        (amount, telegram_id),
+    )
+
+    # تسجيل معاملة
+    db.execute(
+        _sql("""
+            INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """),
+        (user["id"], "transfer_to_bot", amount, "USD", f"to telegram_id={telegram_id}", _now_str()),
+    )
+
+    db.commit()
+    flash("✅ تم تحويل 10$ إلى رصيد البوت بنجاح.", "success")
+    return redirect(url_for("link_telegram"))    
 
 @app.route("/generate_telegram_link_code", methods=["POST"])
 def generate_telegram_link_code():

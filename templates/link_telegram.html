@@ -182,6 +182,10 @@
           </div>
         </div>
 
+           <form method="POST" action="{{ url_for('transfer_to_bot_10') }}" style="margin-top: 12px;">
+    <button class="btn" type="submit">➕ إضافة 10$ إلى رصيد البوت</button>
+</form>  
+
       {% else %}
         <div class="status s-warn">
           ⚠️ {% if session.get('lang') == 'en' %}Not linked{% else %}غير مرتبط{% endif %}
