@@ -845,110 +845,177 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
 
 def redeem_telegram_link_code(telegram_id: int, code_raw: str):
     """
-    يحاول ربط telegram_id بحساب منصة عبر الكود.
-    يرجع (success: bool, info/message: str)
-    - عند النجاح يرجع platform_user_id كنص في info.
+    ربط telegram_id بحساب منصة عبر كود الربط.
+    يقبل:
+      - LNK-XXXXXXXX
+      - XXXXXXXX (8 حروف/أرقام)
+    يرجع:
+      (True, platform_user_id_as_str) عند النجاح
+      (False, message) عند الفشل
     """
     if not telegram_id or not code_raw:
         return False, "بيانات غير مكتملة."
 
-    raw = code_raw.strip().upper()
+    raw = (code_raw or "").strip().upper()
 
-    # يقبل: LNK-XXXXXXXX أو XXXXXXXX
+    # يقبل الكود مع أو بدون prefix (LNK-XXXXXXXX أو XXXXXXXX)
+    raw = (code_raw or "").strip().upper()
+
     if raw.startswith(LINK_CODE_PREFIX):
-        code = raw
-        plain = raw[len(LINK_CODE_PREFIX):]
+        code_clean = raw[len(LINK_CODE_PREFIX):].strip()
     else:
-        code = f"{LINK_CODE_PREFIX}{raw}"
-        plain = raw
+        code_clean = raw
 
-    if not re.fullmatch(r"[A-Z0-9]{8}", plain or ""):
-        return False, "صيغة الكود غير صحيحة."
+    # لازم 8 أحرف/أرقام بالضبط
+    if not re.fullmatch(r"[A-Z0-9]{8}", code_clean):
+        return False, "صيغة الكود غير صحيحة. يجب أن يكون 8 أحرف/أرقام."
 
-    now = _now_str()
+    now = datetime.now(timezone.utc)
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
     db = get_db()
 
-    # تأكد أن هذا التليجرام غير مربوط مسبقاً
     try:
-        row_tg = db.execute(
-            _sql("SELECT platform_user_id FROM telegram_users WHERE telegram_id = ?"),
-            (telegram_id,),
-        ).fetchone()
-        if row_tg and (row_tg.get("platform_user_id") if isinstance(row_tg, dict) else row_tg["platform_user_id"]):
-            return False, "هذا الحساب مربوط مسبقاً."
-    except Exception:
-        pass
-
-    # Postgres: UPDATE..RETURNING (آمن ضد الاستخدام المزدوج)
-    if USE_POSTGRES:
-        try:
-            # قد تكون السكيما تعتمد code أو code_hash -> سنحاول بالـ code أولاً
+        # تأكد أن صف telegram_users موجود
+        if USE_POSTGRES:
+            db.execute(
+                _sql("""
+                    INSERT INTO telegram_users (telegram_id, referral_credits_usd, created_at)
+                    VALUES (?, 0, ?)
+                    ON CONFLICT (telegram_id) DO NOTHING
+                """),
+                (int(telegram_id), now_str),
+            )
+        else:
+            db.execute(
+                """
+                INSERT OR IGNORE INTO telegram_users (telegram_id, referral_credits_usd, created_at)
+                VALUES (?, 0, ?)
+                """,
+                (int(telegram_id), now_str),
+            )
+            
+        # --- اكتشاف الأعمدة الموجودة في telegram_link_codes (Postgres)
+        if USE_POSTGRES:
             cur = db.cursor()
+
             has_user_id = _pg_column_exists(cur, "telegram_link_codes", "user_id")
             user_col = "user_id" if has_user_id else "platform_user_id"
+
             has_code = _pg_column_exists(cur, "telegram_link_codes", "code")
             has_code_hash = _pg_column_exists(cur, "telegram_link_codes", "code_hash")
 
-            # جهز شروط المطابقة حسب الأعمدة المتاحة
-            where_parts = ["used_at IS NULL", "expires_at > ?"]
-            params = [now]
+            if not has_code and not has_code_hash:
+                return False, "جدول أكواد الربط ينقصه code أو code_hash."
+
+            code_hash = hashlib.sha256(code_clean.encode("utf-8")).hexdigest()
+
+            where_parts = []
+            params = []
 
             if has_code:
-                where_parts.insert(0, "code = ?")
-                params.insert(0, plain)  # نخزن plain غالباً بدون prefix داخل code
-            elif has_code_hash:
-                where_parts.insert(0, "code_hash = ?")
-                params.insert(0, hashlib.sha256(plain.encode("utf-8")).hexdigest())
-            else:
-                return False, "سكيما الأكواد غير مكتملة (لا code ولا code_hash)."
+                where_parts.append("code = ?")
+                params.append(code_clean)
 
-            where_sql = " AND ".join(where_parts)
+            if has_code_hash:
+                where_parts.append("code_hash = ?")
+                params.append(code_hash)
 
-            r = db.execute(
-                _sql(f"""
-                    UPDATE telegram_link_codes
-                    SET used_at = ?, used_by_telegram_id = ?
-                    WHERE {where_sql}
-                    RETURNING {user_col}
-                """),
-                (now, telegram_id, *params),
-            ).fetchone()
+            where_sql = " OR ".join(where_parts)
 
+            # UPDATE آمن ضد الاستخدام المزدوج
+            q = f"""
+                UPDATE telegram_link_codes
+                SET used_at = ?, used_by_telegram_id = ?
+                WHERE ({where_sql})
+                  AND used_at IS NULL
+                  AND expires_at > ?
+                RETURNING {user_col} AS platform_user_id
+            """
+
+            r = db.execute(_sql(q), (now_str, int(telegram_id), *params, now_str)).fetchone()
             if not r:
+                db.commit()
                 return False, "الكود غير صحيح أو منتهي أو مستعمل."
 
-            platform_user_id = r[user_col]
+            platform_user_id = r["platform_user_id"]
+            if not platform_user_id:
+                db.commit()
+                return False, "❌ خطأ في بيانات الكود (لا يوجد platform_user_id)."
 
-            # اربط في telegram_users (تأكد من وجود السجل)
-            db.execute(
-                _sql("""
-                    INSERT INTO telegram_users (telegram_id, referral_credits_usd, bot_balance_usd, created_at)
-                    VALUES (?, 0, 0, ?)
-                    ON CONFLICT (telegram_id) DO NOTHING
-                """),
-                (telegram_id, now),
-            )
-
+            # اربطه في telegram_users
             db.execute(
                 _sql("""
                     UPDATE telegram_users
                     SET platform_user_id = ?, linked_at = ?
                     WHERE telegram_id = ?
                 """),
-                (platform_user_id, now, telegram_id),
+                (int(platform_user_id), now_str, int(telegram_id)),
             )
 
             db.commit()
-            return True, str(platform_user_id)
+            return True, str(int(platform_user_id))
 
-        except Exception as e:
-            logging.error("redeem_telegram_link_code pg error: %s", e)
-            try:
-                if hasattr(db, "_conn"):
-                    db._conn.rollback()
-            except Exception:
-                pass
-            return False, "حدث خطأ أثناء الربط."
+        # --- SQLite
+        row = db.execute(
+            _sql("""
+                SELECT platform_user_id, expires_at, used_at, code
+                FROM telegram_link_codes
+                WHERE code = ?
+                LIMIT 1
+            """),
+            (code_clean,),
+        ).fetchone()
+
+        if not row:
+            return False, "الكود غير صحيح."
+        if row.get("used_at"):
+            return False, "هذا الكود مستعمل مسبقاً."
+
+        expires_at_raw = row.get("expires_at")
+        try:
+            expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
+        except Exception:
+            expires_at = datetime.strptime(str(expires_at_raw)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+
+        if expires_at < now:
+            return False, "هذا الكود منتهي."
+
+        platform_user_id = row.get("platform_user_id")
+        if not platform_user_id:
+            return False, "❌ خطأ في بيانات الكود."
+
+        db.execute(
+            _sql("""
+                UPDATE telegram_link_codes
+                SET used_at = ?, used_by_telegram_id = ?
+                WHERE code = ? AND used_at IS NULL
+            """),
+            (now_str, int(telegram_id), code_clean),
+        )
+
+        db.execute(
+            _sql("""
+                UPDATE telegram_users
+                SET platform_user_id = ?, linked_at = ?
+                WHERE telegram_id = ?
+            """),
+            (int(platform_user_id), now_str, int(telegram_id)),
+        )
+
+        db.commit()
+        return True, str(int(platform_user_id))
+
+    except Exception as e:
+        logging.exception("redeem_telegram_link_code error: %s", e)
+        try:
+            if USE_POSTGRES and hasattr(db, "_conn"):
+                db._conn.rollback()
+            else:
+                db.rollback()
+        except Exception:
+            pass
+        return False, "❌ حدث خطأ أثناء الربط. حاول مرة أخرى."
 
     # SQLite: SELECT ثم UPDATE
     try:
@@ -2095,7 +2162,7 @@ def admin_bot_balance():
 
     # GET: عرض بسيط
     return render_template("admin_bot_balance.html")
-    
+
 # ==============================
 # صفحة الإشعارات للمستخدم
 # ==============================
