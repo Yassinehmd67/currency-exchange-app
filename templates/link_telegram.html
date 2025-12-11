@@ -124,6 +124,32 @@
       line-height: 1.8;
     }
     .kv b{ color:#fff; }
+
+    /* زر تلجرام عائم */
+    .floating-telegram{
+      position:fixed;
+      bottom:20px;
+      left:20px;   /* أسفل يسار */
+      background:#0088cc;
+      width:58px;
+      height:58px;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      border-radius:50%;
+      box-shadow:0 4px 12px rgba(0,0,0,.25);
+      z-index:999;
+      cursor:pointer;
+      transition:.2s ease;
+    }
+    .floating-telegram:hover{
+      background:#0099dd;
+      transform:scale(1.1);
+    }
+    .floating-telegram img{
+      width:34px;
+      height:34px;
+    }
   </style>
 </head>
 
@@ -135,7 +161,7 @@
           {% if session.get('lang') == 'en' %}🔗 Link Telegram{% else %}🔗 ربط تيليجرام{% endif %}
         </h1>
 
-        <a class="btn" href="{{ url_for('index') }}"></a>
+        <a class="btn" href="{{ url_for('index') }}">
           {% if session.get('lang') == 'en' %}⬅ Back{% else %}⬅ الرجوع{% endif %}
         </a>
       </div>
@@ -182,9 +208,16 @@
           </div>
         </div>
 
-           <form method="POST" action="{{ url_for('transfer_to_bot_10') }}" style="margin-top: 12px;">
-    <button class="btn" type="submit">➕ إضافة 10$ إلى رصيد البوت</button>
-</form>  
+        <!-- زر إضافة 10$ إلى رصيد البوت -->
+        <form method="POST" action="{{ url_for('transfer_to_bot_10') }}" style="margin-top: 12px;">
+          <button class="btn" type="submit">
+            {% if session.get('lang') == 'en' %}
+              ➕ Add $10 to bot balance
+            {% else %}
+              ➕ إضافة 10$ إلى رصيد البوت
+            {% endif %}
+          </button>
+        </form>
 
       {% else %}
         <div class="status s-warn">
@@ -248,6 +281,11 @@ No active code yet. Click the button below to generate one.
       {% endif %}
     </div>
   </div>
+
+  <!-- زر البوت الخاص بتلغرام أسفل يسار -->
+  <a href="https://t.me/Currencyexchangedh_bot" target="_blank" class="floating-telegram">
+    <img src="https://cdn-icons-png.flaticon.com/512/2111/2111646.png" alt="Telegram">
+  </a>
 
   <script>
     function copyCode(){
