@@ -747,14 +747,9 @@ def count_unread_notifications(user_id: int) -> int:
 # ==============================
 # ✅ (NEW) Platform ↔ Telegram linking helpers
 # ==============================
-LINK_CODE_PREFIX = "LNK-"
 
 def _now_str():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-def _future_minutes_str(minutes: int):
-    from datetime import timedelta
-    return (datetime.now() + timedelta(minutes=minutes)).strftime("%Y-%m-%d %H:%M:%S")
 
 def _generate_link_code(length=8):
     alphabet = string.ascii_uppercase + string.digits
@@ -894,7 +889,7 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
                 """,
                 (int(telegram_id), now_str),
             )
-            
+
         # --- اكتشاف الأعمدة الموجودة في telegram_link_codes (Postgres)
         if USE_POSTGRES:
             cur = db.cursor()
@@ -2533,7 +2528,6 @@ def unlink_telegram():
 
     db = get_db()
 
-    # فك الربط عن هذا المستخدم في المنصة
     db.execute(
         _sql("""
             UPDATE telegram_users
@@ -2543,7 +2537,6 @@ def unlink_telegram():
         (user["id"],),
     )
 
-    # (اختياري) تنظيف أكواد قديمة مرتبطة به
     try:
         if USE_POSTGRES:
             db.execute(
@@ -2570,66 +2563,6 @@ def unlink_telegram():
     flash("✅ تم إلغاء ربط حساب Telegram.", "success")
     return redirect(url_for("link_telegram"))
 
-@app.route("/transfer_to_bot_10", methods=["POST"])
-def transfer_to_bot_10():
-    if "username" not in session:
-        return redirect(url_for("login"))
-
-    user = get_user(session["username"])
-    if not user:
-        session.clear()
-        return redirect(url_for("login"))
-
-    amount = 10.0
-    db = get_db()
-
-    # جلب telegram_id المرتبط بهذا المستخدم
-    row = db.execute(
-        _sql("SELECT telegram_id FROM telegram_users WHERE platform_user_id = ? LIMIT 1"),
-        (user["id"],),
-    ).fetchone()
-
-    if not row:
-        flash("❌ يجب ربط حساب Telegram أولاً قبل التحويل.", "error")
-        return redirect(url_for("link_telegram"))
-
-    telegram_id = int(row["telegram_id"])
-
-    # خصم من رصيد المنصة (USD)
-    bal_row = db.execute(
-        _sql("SELECT amount FROM balances WHERE user_id = ? AND currency = ?"),
-        (user["id"], "USD"),
-    ).fetchone()
-
-    current = float(bal_row["amount"]) if bal_row else 0.0
-    if current + 1e-9 < amount:
-        flash("❌ رصيد USD في المنصة غير كافٍ لإضافة 10$ للبوت.", "error")
-        return redirect(url_for("link_telegram"))
-
-    db.execute(
-        _sql("UPDATE balances SET amount = amount - ? WHERE user_id = ? AND currency = ?"),
-        (amount, user["id"], "USD"),
-    )
-
-    # إضافة للبوت (bot_balance_usd)
-    db.execute(
-        _sql("UPDATE telegram_users SET bot_balance_usd = COALESCE(bot_balance_usd, 0) + ? WHERE telegram_id = ?"),
-        (amount, telegram_id),
-    )
-
-    # تسجيل معاملة
-    db.execute(
-        _sql("""
-            INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """),
-        (user["id"], "transfer_to_bot", amount, "USD", f"to telegram_id={telegram_id}", _now_str()),
-    )
-
-    db.commit()
-    flash("✅ تم تحويل 10$ إلى رصيد البوت بنجاح.", "success")
-    return redirect(url_for("link_telegram"))    
-
 @app.route("/generate_telegram_link_code", methods=["POST"])
 def generate_telegram_link_code():
     if "username" not in session:
@@ -2647,6 +2580,76 @@ def generate_telegram_link_code():
         logging.error("generate_telegram_link_code error: %s", e)
         flash("❌ تعذر توليد كود الربط. حاول مرة أخرى.", "error")
 
+    return redirect(url_for("link_telegram"))    
+
+@app.route("/transfer_to_bot_10", methods=["POST"])
+def transfer_to_bot_10():
+    if "username" not in session:
+        return redirect(url_for("login"))
+
+    user = get_user(session["username"])
+    if not user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    db = get_db()
+
+    # لازم يكون الحساب مربوط
+    row = db.execute(
+        _sql("""
+            SELECT telegram_id
+            FROM telegram_users
+            WHERE platform_user_id = ?
+            LIMIT 1
+        """),
+        (user["id"],),
+    ).fetchone()
+
+    if not row:
+        flash("❌ يجب ربط تيليجرام أولاً.", "error")
+        return redirect(url_for("link_telegram"))
+
+    telegram_id = int(row["telegram_id"])
+    amount = float(BOT_TOPUP_FIXED_USD)  # غالباً 10
+
+    # التأكد من رصيد USD في المنصة
+    bal_row = db.execute(
+        _sql("SELECT amount FROM balances WHERE user_id = ? AND currency = ?"),
+        (user["id"], "USD"),
+    ).fetchone()
+
+    current = float(bal_row["amount"]) if bal_row else 0.0
+    if current + 1e-9 < amount:
+        flash("❌ رصيد USD في المنصة غير كافٍ لإضافة 10$ للبوت.", "error")
+        return redirect(url_for("link_telegram"))
+
+    # خصم من المنصة
+    db.execute(
+        _sql("UPDATE balances SET amount = amount - ? WHERE user_id = ? AND currency = ?"),
+        (amount, user["id"], "USD"),
+    )
+
+    # إضافة للبوت
+    db.execute(
+        _sql("""
+            UPDATE telegram_users
+            SET bot_balance_usd = COALESCE(bot_balance_usd, 0) + ?
+            WHERE telegram_id = ?
+        """),
+        (amount, telegram_id),
+    )
+
+    # تسجيل معاملة
+    db.execute(
+        _sql("""
+            INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """),
+        (user["id"], "transfer_to_bot", amount, "USD", f"to telegram_id={telegram_id}", _now_str()),
+    )
+
+    db.commit()
+    flash("✅ تم تحويل 10$ إلى رصيد البوت بنجاح.", "success")
     return redirect(url_for("link_telegram"))    
 
 # ==============================
