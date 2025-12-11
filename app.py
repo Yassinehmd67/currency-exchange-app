@@ -39,8 +39,7 @@ from flask import (
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from currency_converter.converter import convert_currency
-
+from api_handler import convert_currency
 # ==============================
 # تحميل الإعدادات من .env
 # ==============================

@@ -1,19 +1,25 @@
 import os
 import json
-from decimal import Decimal
+from decimal import Decimal, getcontext
 from datetime import datetime, timedelta
 
 import requests
 from dotenv import load_dotenv
 
-# نحمل متغيرات البيئة (حتى لو استدعينا الملف مباشرة)
+# نحمل متغيرات البيئة
 load_dotenv()
 
 EXCHANGE_API_KEY = os.getenv("EXCHANGE_API_KEY")
 
-# ملف كاش محلي (اختياري – يمكنك تغييره أو حذفه)
+# ملف كاش محلي
 RATES_CACHE_FILE = "rates_cache.json"
 CACHE_TTL_MINUTES = 10  # مدة صلاحية الكاش بالدقائق
+
+# دقة أكبر للعمليات الداخلية
+getcontext().prec = 28
+
+# العملات المدعومة (طابقها مع app.py)
+SUPPORTED_CURRENCIES = ["USD", "EUR", "GBP", "MAD", "AED", "SAR", "EGP"]
 
 
 def _load_cache():
@@ -53,28 +59,17 @@ def _is_cache_valid(entry):
     return datetime.utcnow() - ts < timedelta(minutes=CACHE_TTL_MINUTES)
 
 
-def get_live_rate(from_currency: str, to_currency: str, amount: Decimal) -> Decimal:
+def _fetch_base_usd_rates():
     """
-    جلب المبلغ المحوَّل باستخدام Exchangerate-API.
-    يرجع قيمة المبلغ المحوَّل (وليس الـ rate فقط) من API مباشرة.
-    يرفع RuntimeError في حالة وجود مشكلة.
+    يجلب أسعار كل العملات مقابل USD من Exchangerate-API.
+    يرجع dict مثل:
+      {"USD": Decimal("1"), "SAR": Decimal("3.75"), ...}
     """
     if not EXCHANGE_API_KEY:
         raise RuntimeError("EXCHANGE_API_KEY غير موجود في ملف .env")
 
-    # نستخدم الكاش حسب (from,to,amount) إذا أحببت يمكن أن يكون حسب (from,to) فقط
-    cache_key = f"{from_currency}_{to_currency}_{amount}"
-    cache = _load_cache()
-    entry = cache.get(cache_key)
-
-    if entry and _is_cache_valid(entry):
-        # نعيد القيمة من الكاش
-        return Decimal(str(entry["converted"]))
-
-    url = (
-        f"https://v6.exchangerate-api.com/v6/"
-        f"{EXCHANGE_API_KEY}/pair/{from_currency}/{to_currency}/{amount}"
-    )
+    # endpoint الرسمي لـ latest/USD في v6
+    url = f"https://v6.exchangerate-api.com/v6/{EXCHANGE_API_KEY}/latest/USD"
 
     try:
         resp = requests.get(url, timeout=5)
@@ -85,20 +80,43 @@ def get_live_rate(from_currency: str, to_currency: str, amount: Decimal) -> Deci
     if data.get("result") != "success":
         raise RuntimeError(f"خطأ من مزوِّد الأسعار: {data!r}")
 
-    converted = data.get("conversion_result")
-    if converted is None:
-        raise RuntimeError("الرد من API لا يحتوي على conversion_result")
+    conv = data.get("conversion_rates") or {}
+    if "USD" not in conv:
+        # نضمن أن USD موجودة كأساس
+        conv["USD"] = 1.0
 
-    converted_dec = Decimal(str(converted))
+    rates = {}
+    for cur in SUPPORTED_CURRENCIES:
+        val = conv.get(cur)
+        if val is None:
+            raise RuntimeError(f"الرد من API لا يحتوي على سعر {cur}")
+        rates[cur] = Decimal(str(val))
 
-    # نخزن في الكاش
-    cache[cache_key] = {
-        "converted": str(converted_dec),
+    return rates
+
+
+def _get_base_usd_rates():
+    """
+    دالة تستخدم الكاش:
+      - BASE_USD_RATES: { "rates": {...}, "timestamp": "..." }
+    """
+    cache = _load_cache()
+    entry = cache.get("BASE_USD_RATES")
+
+    if entry and _is_cache_valid(entry):
+        stored = entry.get("rates") or {}
+        return {k: Decimal(str(v)) for k, v in stored.items()}
+
+    # كاش منتهي أو غير موجود → جلب جديد
+    rates = _fetch_base_usd_rates()
+
+    cache["BASE_USD_RATES"] = {
+        "rates": {k: float(v) for k, v in rates.items()},
         "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
     }
     _save_cache(cache)
 
-    return converted_dec
+    return rates
 
 
 def convert_currency(amount: Decimal, from_currency: str, to_currency: str) -> Decimal:
@@ -106,9 +124,34 @@ def convert_currency(amount: Decimal, from_currency: str, to_currency: str) -> D
     دالة واجهة بسيطة تستخدمها في app.py:
         from currency_converter.converter import convert_currency
 
-    ترجع المبلغ المحوَّل باستخدام السعر الحقيقي.
+    التحويل يتم عبر عملة أساس واحدة (USD) لمنع أي أربيتراج:
+        A -> USD -> B
+    بدون أي عمولة إضافية هنا.
     """
+    from_currency = (from_currency or "").upper()
+    to_currency = (to_currency or "").upper()
+
     if from_currency == to_currency:
         return amount
 
-    return get_live_rate(from_currency, to_currency, amount)
+    if from_currency not in SUPPORTED_CURRENCIES:
+        raise RuntimeError(f"عملة غير مدعومة: {from_currency}")
+    if to_currency not in SUPPORTED_CURRENCIES:
+        raise RuntimeError(f"عملة غير مدعومة: {to_currency}")
+
+    amt = Decimal(str(amount))
+
+    rates = _get_base_usd_rates()
+
+    rate_from = rates.get(from_currency)
+    rate_to = rates.get(to_currency)
+
+    if rate_from is None or rate_to is None:
+        raise RuntimeError("لم يتم العثور على السعر لأحد العملتين")
+
+    # مثال: rate["SAR"] = 3.75 يعني 1 USD = 3.75 SAR
+    # إذن 1 SAR = 1 / 3.75 USD
+    amount_in_usd = amt / rate_from
+    converted = amount_in_usd * rate_to
+
+    return converted
