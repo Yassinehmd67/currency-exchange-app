@@ -1,4 +1,4 @@
-<!-- C:\Users\PC\Desktop\currency_converter_project\templates\login.html -->
+<!-- templates/login.html -->
 <!DOCTYPE html>
 <html lang="{{ session.get('lang','ar') }}">
 <head>
@@ -52,6 +52,20 @@
             {{ 'left' if session.get('lang','ar')=='en' else 'right' }}:20px;
         }
         .lang-switch a{color:#3498db;font-weight:bold;text-decoration:none;}
+
+        .forgot{
+            text-align:{{ 'right' if session.get('lang','ar')=='ar' else 'left' }};
+            margin-top:-8px;
+            margin-bottom:10px;
+        }
+        .forgot a{
+            font-size:13px;
+            color:#3498db;
+            text-decoration:none;
+        }
+        .forgot a:hover{
+            text-decoration:underline;
+        }
     </style>
 </head>
 <body>
@@ -76,8 +90,17 @@
     <form action="{{ url_for('login') }}" method="POST">
         <input type="text" name="username"
                placeholder="{{ 'Username' if session.get('lang')=='en' else 'اسم المستخدم' }}" required>
+
         <input type="password" name="password"
                placeholder="{{ 'Password' if session.get('lang')=='en' else 'كلمة المرور' }}" required>
+
+        <!-- 👇 الرابط الجديد -->
+        <div class="forgot">
+            <a href="{{ url_for('forgot_password') }}">
+                {{ 'Forgot your password?' if session.get('lang')=='en' else 'نسيت كلمة المرور؟' }}
+            </a>
+        </div>
+
         <button type="submit">{{ 'Login' if session.get('lang')=='en' else 'دخول' }}</button>
     </form>
 

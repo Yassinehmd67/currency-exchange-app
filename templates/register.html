@@ -18,7 +18,7 @@
         .wrapper{
             position:relative;
             width:100%;
-            max-width:420px;
+            max-width:440px;
             padding:24px;
         }
         .box{
@@ -43,18 +43,31 @@
             font-size:13px;
             color:#555;
         }
-        .field input{
+        .field input,
+        .field select{
             width:100%;
             padding:10px 11px;
             border:1px solid #d0d4da;
             border-radius:8px;
             font-size:14px;
             box-sizing:border-box;
+            background:#fff;
         }
-        .field input:focus{
+        .field input:focus,
+        .field select:focus{
             outline:none;
             border-color:#3498db;
             box-shadow:0 0 0 2px rgba(52,152,219,.15);
+        }
+        .phone-row{
+            display:flex;
+            gap:6px;
+        }
+        .phone-row .country-select{
+            flex:0 0 42%;
+        }
+        .phone-row .phone-input{
+            flex:1;
         }
         button{
             width:100%;
@@ -94,6 +107,42 @@
             text-decoration:none;
             font-weight:600;
         }
+
+        /* Password strength */
+        .pw-helper{
+            font-size:11px;
+            color:#777;
+            margin-top:3px;
+            line-height:1.5;
+        }
+        .pw-meter{
+            margin-top:6px;
+            height:6px;
+            border-radius:999px;
+            background:#e5e7eb;
+            overflow:hidden;
+        }
+        .pw-meter-bar{
+            height:100%;
+            width:0%;
+            transition:width .25s ease, background-color .25s ease;
+        }
+        .pw-weak{ background:#ef4444; }
+        .pw-medium{ background:#f97316; }
+        .pw-strong{ background:#22c55e; }
+        .pw-label{
+            margin-top:4px;
+            font-size:12px;
+            color:#555;
+        }
+
+        .note{
+            margin-top:8px;
+            font-size:12px;
+            color:#666;
+            line-height:1.6;
+            text-align:{{ 'right' if session.get('lang','ar')=='ar' else 'left' }};
+        }
     </style>
 </head>
 <body>
@@ -117,31 +166,80 @@
           {% endif %}
         {% endwith %}
 
-        <form action="{{ url_for('register') }}" method="POST">
+        <form action="{{ url_for('register') }}" method="POST" id="registerForm">
             <div class="field">
                 <label>{{ 'Username' if session.get('lang')=='en' else 'اسم المستخدم' }}</label>
-                <input type="text" name="username" required>
+                <input type="text" name="username" required autocomplete="username">
             </div>
+
             <div class="field">
                 <label>{{ 'Email' if session.get('lang')=='en' else 'البريد الإلكتروني' }}</label>
-                <input type="email" name="email">
+                <input type="email" name="email" required autocomplete="email">
             </div>
+
             <div class="field">
                 <label>{{ 'Phone number' if session.get('lang')=='en' else 'رقم الهاتف' }}</label>
-                <input type="text" name="phone">
+                <div class="phone-row">
+                    <div class="country-select">
+                        <select id="phoneCountry">
+                            <!-- يمكن إضافة دول أخرى لاحقاً بسهولة -->
+                            <option value="+212" selected>🇲🇦 +212 (MA)</option>
+                            <option value="+966">🇸🇦 +966 (SA)</option>
+                            <option value="+20">🇪🇬 +20 (EG)</option>
+                            <option value="+971">🇦🇪 +971 (AE)</option>
+                            <option value="+1">🇺🇸 +1 (US)</option>
+                            <option value="+44">🇬🇧 +44 (UK)</option>
+                            <option value="+33">🇫🇷 +33 (FR)</option>
+                        </select>
+                    </div>
+                    <div class="phone-input">
+                        <input type="tel" id="phoneLocal" placeholder="{{ '5XXXXXXXX' if session.get('lang')=='en' else '5XXXXXXXX' }}">
+                    </div>
+                </div>
+                <!-- هذا هو الحقل الذي يقرأه الـ backend حالياً -->
+                <input type="hidden" name="phone" id="phoneFull">
             </div>
+
             <div class="field">
                 <label>{{ 'Password' if session.get('lang')=='en' else 'كلمة المرور' }}</label>
-                <input type="password" name="password" required>
+                <input
+                    type="password"
+                    name="password"
+                    id="password"
+                    required
+                    minlength="8"
+                    autocomplete="new-password"
+                    pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}"
+                >
+                <div class="pw-helper">
+                    {% if session.get('lang')=='en' %}
+                        At least 8 characters, including uppercase, lowercase and a number.
+                    {% else %}
+                        يجب أن تكون 8 أحرف على الأقل وتحتوي على حرف كبير وحرف صغير ورقم.
+                    {% endif %}
+                </div>
+                <div class="pw-meter">
+                    <div id="pwBar" class="pw-meter-bar"></div>
+                </div>
+                <div id="pwLabel" class="pw-label"></div>
             </div>
+
             <div class="field">
                 <label>{{ 'Confirm password' if session.get('lang')=='en' else 'تأكيد كلمة المرور' }}</label>
-                <input type="password" name="confirm_password" required>
+                <input type="password" name="confirm_password" id="confirmPassword" required autocomplete="new-password">
             </div>
 
             <button type="submit">
                 {{ 'Register' if session.get('lang')=='en' else 'تسجيل' }}
             </button>
+
+            <div class="note">
+                {% if session.get('lang')=='en' %}
+                    After registration we'll send you an activation link to your email to verify your account.
+                {% else %}
+                    بعد إنشاء الحساب سيتم إرسال رابط تفعيل إلى بريدك الإلكتروني لتأكيد الحساب (سيتم تفعيل هذه الخطوة من جانب الخادم).
+                {% endif %}
+            </div>
         </form>
 
         <a class="link" href="{{ url_for('login') }}">
@@ -149,6 +247,80 @@
         </a>
     </div>
 </div>
+
+<script>
+    // دمج كود الدولة مع الرقم في حقل phone قبل الإرسال
+    function updateFullPhone(){
+        const cc = document.getElementById('phoneCountry').value || '';
+        const local = (document.getElementById('phoneLocal').value || '').trim();
+        const full = local ? (cc + local) : '';
+        document.getElementById('phoneFull').value = full;
+    }
+
+    document.getElementById('phoneCountry').addEventListener('change', updateFullPhone);
+    document.getElementById('phoneLocal').addEventListener('input', updateFullPhone);
+
+    // مقياس قوة كلمة المرور
+    const pwInput = document.getElementById('password');
+    const pwBar = document.getElementById('pwBar');
+    const pwLabel = document.getElementById('pwLabel');
+
+    function evaluatePassword(pw){
+        let score = 0;
+        if (pw.length >= 8) score++;
+        if (/[a-z]/.test(pw)) score++;
+        if (/[A-Z]/.test(pw)) score++;
+        if (/\d/.test(pw)) score++;
+        if (/[^A-Za-z0-9]/.test(pw)) score++; // رمز خاص
+        return score;
+    }
+
+    function updatePwMeter(){
+        const pw = pwInput.value || '';
+        const score = evaluatePassword(pw);
+
+        let percent = 0;
+        let label = '';
+        let cls = '';
+
+        if (!pw){
+            percent = 0;
+            label = '';
+            cls = '';
+        } else if (score <= 2){
+            percent = 33;
+            cls = 'pw-weak';
+            label = "{{ 'Weak password' if session.get('lang')=='en' else 'كلمة مرور ضعيفة' }}";
+        } else if (score === 3 || score === 4){
+            percent = 66;
+            cls = 'pw-medium';
+            label = "{{ 'Medium strength' if session.get('lang')=='en' else 'قوة متوسطة' }}";
+        } else {
+            percent = 100;
+            cls = 'pw-strong';
+            label = "{{ 'Strong password' if session.get('lang')=='en' else 'كلمة مرور قوية' }}";
+        }
+
+        pwBar.className = 'pw-meter-bar ' + cls;
+        pwBar.style.width = percent + '%';
+        pwLabel.textContent = label;
+    }
+
+    pwInput.addEventListener('input', updatePwMeter);
+
+    // تأكد من تحديث الهاتف الكامل عند الإرسال + تحقق بسيط لتطابق كلمات المرور
+    document.getElementById('registerForm').addEventListener('submit', function(e){
+        updateFullPhone();
+
+        const pw = pwInput.value || '';
+        const cpw = document.getElementById('confirmPassword').value || '';
+
+        if (pw !== cpw){
+            e.preventDefault();
+            alert("{{ 'Passwords do not match' if session.get('lang')=='en' else 'كلمتا المرور غير متطابقتين' }}");
+        }
+    });
+</script>
 
 </body>
 </html>

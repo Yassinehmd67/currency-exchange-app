@@ -5,6 +5,8 @@ import sqlite3
 import logging
 import hashlib
 import requests  # Telegram Bot API
+import smtplib
+from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 
@@ -72,6 +74,95 @@ SITE_PUBLIC_URL = os.getenv(
     "SITE_PUBLIC_URL",
     "https://currency-exchange-app-2ymh.onrender.com"
 )
+
+# ==============================
+# إعدادات إرسال البريد الإلكتروني
+# ==============================
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip() == "1"
+
+def send_verification_email(to_email: str, token: str) -> str:
+    """
+    يرسل إيميل تفعيل (إن كانت إعدادات SMTP جاهزة)،
+    ويرجع رابط التفعيل مهما كان.
+    """
+    if not to_email:
+        return ""
+
+    verify_path = url_for("verify_email", token=token)
+    verify_link = f"{SITE_PUBLIC_URL.rstrip('/')}{verify_path}"
+
+    subject = "تفعيل حسابك - Currency Exchange"
+    body = (
+        "مرحباً،\n\n"
+        "شكراً لتسجيلك في منصة تحويل العملات.\n"
+        "لإتمام التفعيل، يرجى الضغط على الرابط التالي:\n\n"
+        f"{verify_link}\n\n"
+        "إذا لم تقم بالتسجيل، يمكنك تجاهل هذه الرسالة.\n"
+    )
+
+    if SMTP_HOST and SMTP_USERNAME and SMTP_PASSWORD:
+        try:
+            msg = MIMEText(body, "plain", "utf-8")
+            msg["Subject"] = subject
+            msg["From"] = SMTP_USERNAME
+            msg["To"] = to_email
+
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+                if SMTP_USE_TLS:
+                    server.starttls()
+                server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                server.send_message(msg)
+        except Exception as e:
+            logging.error("Error sending verification email: %s", e)
+    else:
+        # وضع التطوير: نطبع الرابط في اللوج
+        logging.info("Verification link for %s: %s", to_email, verify_link)
+
+    return verify_link
+
+def send_password_reset_email(to_email: str, token: str) -> str:
+    """
+    يرسل إيميل إعادة تعيين كلمة المرور (إن كانت إعدادات SMTP جاهزة)،
+    ويرجع رابط إعادة التعيين مهما كان.
+    """
+    if not to_email:
+        return ""
+
+    reset_path = url_for("reset_password", token=token, _external=False)
+    reset_link = f"{SITE_PUBLIC_URL.rstrip('/')}{reset_path}"
+
+    subject = "إعادة تعيين كلمة المرور - Currency Exchange"
+    body = (
+        "مرحباً،\n\n"
+        "وصلتنا طلبية لإعادة تعيين كلمة المرور لحسابك.\n"
+        "لإعادة تعيين كلمة المرور، يرجى الضغط على الرابط التالي:\n\n"
+        f"{reset_link}\n\n"
+        "إذا لم تقم أنت بهذا الطلب، يمكنك تجاهل هذه الرسالة.\n"
+    )
+
+    if SMTP_HOST and SMTP_USERNAME and SMTP_PASSWORD:
+        try:
+            msg = MIMEText(body, "plain", "utf-8")
+            msg["Subject"] = subject
+            msg["From"] = SMTP_USERNAME
+            msg["To"] = to_email
+
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+                if SMTP_USE_TLS:
+                    server.starttls()
+                server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                server.send_message(msg)
+        except Exception as e:
+            logging.error("Error sending password reset email: %s", e)
+    else:
+        # وضع التطوير: نطبع الرابط في اللوج
+        logging.info("Password reset link for %s: %s", to_email, reset_link)
+
+    return reset_link    
 
 # ==============================
 # Telegram Linking + Bot Wallet settings
@@ -246,17 +337,34 @@ def init_db():
 
         db = psycopg2.connect(DATABASE_URL)
         cur = db.cursor()
-
+        
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id BIGSERIAL PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            email TEXT,
-            phone TEXT,
-            password_hash TEXT NOT NULL,
-            is_admin BOOLEAN DEFAULT FALSE,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
-        );
+            CREATE TABLE IF NOT EXISTS users (
+                id BIGSERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                email TEXT,
+                phone TEXT,
+                password_hash TEXT NOT NULL,
+                is_admin BOOLEAN DEFAULT FALSE,
+                email_verified BOOLEAN DEFAULT FALSE,
+                email_verify_token TEXT,
+                email_verify_sent_at TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
+            );
+        """)
+
+        # ترقية جدول users لو كان قديماً (في حال كان موجوداً بدون الأعمدة الجديدة)
+        cur.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;
+        """)
+        cur.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS email_verify_token TEXT;
+        """)
+        cur.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS email_verify_sent_at TEXT;
         """)
 
         cur.execute("""
@@ -268,6 +376,10 @@ def init_db():
             UNIQUE(user_id, currency)
         );
         """)
+
+        # أعمدة خاصة بإعادة تعيين كلمة المرور (Postgres)
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token TEXT;")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_sent_at TEXT;")
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
@@ -405,175 +517,155 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_user_id ON telegram_link_codes(user_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_expires_at ON telegram_link_codes(expires_at);")
 
-        # ✅ (NEW) telegram_users: رصيد البوت (يخصم منه أولا قبل رصيد الإحالات)
-        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS bot_balance_usd DOUBLE PRECISION DEFAULT 0;")
-        # ✅ (NEW) SQLite: bot_balance_usd
+        # ✅ (NEW) telegram_users: رصيد البوت (يخصم منه أولاً قبل رصيد الإحالات)
+    # ==============================
+    # SQLite upgrades (local file)
+    # ==============================
+    if not USE_POSTGRES:
+        # users: أعمدة التحقق من البريد + إعادة تعيين كلمة المرور
+        cols_users = {
+            c["name"]
+            for c in cur.execute("PRAGMA table_info(users)").fetchall()
+        }
 
-        # ✅ (NEW) SQLite: bot_balance_usd
-        try:
-            cur.execute("ALTER TABLE telegram_users ADD COLUMN bot_balance_usd REAL DEFAULT 0;")
-        except Exception:
-            pass
+        if "email_verified" not in cols_users:
+            cur.execute(
+                "ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0"
+            )
+        if "email_verify_token" not in cols_users:
+            cur.execute("ALTER TABLE users ADD COLUMN email_verify_token TEXT")
+        if "email_verify_sent_at" not in cols_users:
+            cur.execute("ALTER TABLE users ADD COLUMN email_verify_sent_at TEXT")
 
-        db.commit()
-        db.close()
-        return    
+        if "password_reset_token" not in cols_users:
+            cur.execute("ALTER TABLE users ADD COLUMN password_reset_token TEXT")
+        if "password_reset_sent_at" not in cols_users:
+            cur.execute("ALTER TABLE users ADD COLUMN password_reset_sent_at TEXT")
 
-    # ==== ترقية الجداول لو كانت قديمة ====
+        # telegram_users: bot_balance_usd + referral_credits_usd + الربط
+        cols_tg = {
+            c["name"]
+            for c in cur.execute("PRAGMA table_info(telegram_users)").fetchall()
+        }
 
-    # pending_deposits
-    cols_dep = {c["name"] for c in cur.execute("PRAGMA table_info(pending_deposits)").fetchall()}
-    if "status" not in cols_dep:
-        cur.execute("ALTER TABLE pending_deposits ADD COLUMN status TEXT DEFAULT 'pending'")
-    if "processed_by" not in cols_dep:
-        cur.execute("ALTER TABLE pending_deposits ADD COLUMN processed_by TEXT")
-    if "processed_at" not in cols_dep:
-        cur.execute("ALTER TABLE pending_deposits ADD COLUMN processed_at TEXT")
-
-    # pending_withdrawals
-    cols_w = {c["name"] for c in cur.execute("PRAGMA table_info(pending_withdrawals)").fetchall()}
-    if "status" not in cols_w:
-        cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN status TEXT DEFAULT 'pending'")
-    if "processed_by" not in cols_w:
-        cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_by TEXT")
-    if "processed_at" not in cols_w:
-        cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_at TEXT")
-
-    # notifications
-    cols_not = {c["name"] for c in cur.execute("PRAGMA table_info(notifications)").fetchall()}
-
-    if "body" not in cols_not:
-        cur.execute("ALTER TABLE notifications ADD COLUMN body TEXT")
-        if "message" in cols_not:
+        if "bot_balance_usd" not in cols_tg:
             try:
-                cur.execute("UPDATE notifications SET body = message WHERE body IS NULL")
+                cur.execute(
+                    "ALTER TABLE telegram_users "
+                    "ADD COLUMN bot_balance_usd REAL DEFAULT 0"
+                )
             except Exception:
                 pass
 
-    if "type" not in cols_not:
-        cur.execute("ALTER TABLE notifications ADD COLUMN type TEXT")
+        if "referral_credits_usd" not in cols_tg:
+            cur.execute(
+                "ALTER TABLE telegram_users "
+                "ADD COLUMN referral_credits_usd REAL DEFAULT 0"
+            )
+        if "platform_user_id" not in cols_tg:
+            cur.execute(
+                "ALTER TABLE telegram_users "
+                "ADD COLUMN platform_user_id INTEGER"
+            )
+        if "linked_at" not in cols_tg:
+            cur.execute("ALTER TABLE telegram_users ADD COLUMN linked_at TEXT")
 
-    if "is_read" not in cols_not:
-        cur.execute("ALTER TABLE notifications ADD COLUMN is_read INTEGER DEFAULT 0")
+        # ==== ترقية الجداول لو كانت قديمة ====
 
-    if "created_at" not in cols_not:
-        cur.execute("ALTER TABLE notifications ADD COLUMN created_at TEXT")
+        # pending_deposits
+        cols_dep = {
+            c["name"]
+            for c in cur.execute(
+                "PRAGMA table_info(pending_deposits)"
+            ).fetchall()
+        }
+        if "status" not in cols_dep:
+            cur.execute(
+                "ALTER TABLE pending_deposits "
+                "ADD COLUMN status TEXT DEFAULT 'pending'"
+            )
+        if "processed_by" not in cols_dep:
+            cur.execute(
+                "ALTER TABLE pending_deposits ADD COLUMN processed_by TEXT"
+            )
+        if "processed_at" not in cols_dep:
+            cur.execute(
+                "ALTER TABLE pending_deposits ADD COLUMN processed_at TEXT"
+            )
 
-    if "ref_type" not in cols_not:
-        cur.execute("ALTER TABLE notifications ADD COLUMN ref_type TEXT")
-    if "ref_id" not in cols_not:
-        cur.execute("ALTER TABLE notifications ADD COLUMN ref_id INTEGER")
+        # pending_withdrawals
+        cols_w = {
+            c["name"]
+            for c in cur.execute(
+                "PRAGMA table_info(pending_withdrawals)"
+            ).fetchall()
+        }
+        if "status" not in cols_w:
+            cur.execute(
+                "ALTER TABLE pending_withdrawals "
+                "ADD COLUMN status TEXT DEFAULT 'pending'"
+            )
+        if "processed_by" not in cols_w:
+            cur.execute(
+                "ALTER TABLE pending_withdrawals ADD COLUMN processed_by TEXT"
+            )
+        if "processed_at" not in cols_w:
+            cur.execute(
+                "ALTER TABLE pending_withdrawals ADD COLUMN processed_at TEXT"
+            )
 
-    # telegram_users: add referral_credits_usd
-    cols_tg = {c["name"] for c in cur.execute("PRAGMA table_info(telegram_users)").fetchall()}
-    if "referral_credits_usd" not in cols_tg:
-        cur.execute("ALTER TABLE telegram_users ADD COLUMN referral_credits_usd REAL DEFAULT 0")
+        # notifications
+        cols_not = {
+            c["name"]
+            for c in cur.execute(
+                "PRAGMA table_info(notifications)"
+            ).fetchall()
+        }
 
-    # ✅ (NEW) telegram_users: add platform_user_id + linked_at
-    cols_tg = {c["name"] for c in cur.execute("PRAGMA table_info(telegram_users)").fetchall()}
-    if "platform_user_id" not in cols_tg:
-        cur.execute("ALTER TABLE telegram_users ADD COLUMN platform_user_id INTEGER")
-    if "linked_at" not in cols_tg:
-        cur.execute("ALTER TABLE telegram_users ADD COLUMN linked_at TEXT")
+        if "body" not in cols_not:
+            cur.execute("ALTER TABLE notifications ADD COLUMN body TEXT")
+            if "message" in cols_not:
+                try:
+                    cur.execute(
+                        "UPDATE notifications "
+                        "SET body = message "
+                        "WHERE body IS NULL"
+                    )
+                except Exception:
+                    pass
 
-    # ✅ (NEW) telegram_link_codes table
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS telegram_link_codes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            platform_user_id INTEGER NOT NULL,
-            code TEXT UNIQUE NOT NULL,
-            expires_at TEXT NOT NULL,
-            used_at TEXT,
-            used_by_telegram_id INTEGER
-        );
-    """)
+        if "type" not in cols_not:
+            cur.execute("ALTER TABLE notifications ADD COLUMN type TEXT")
 
-    db.commit()
-    db.close()
+        if "is_read" not in cols_not:
+            cur.execute(
+                "ALTER TABLE notifications "
+                "ADD COLUMN is_read INTEGER DEFAULT 0"
+            )
 
+        if "created_at" not in cols_not:
+            cur.execute("ALTER TABLE notifications ADD COLUMN created_at TEXT")
 
-def ensure_default_admin():
-    """
-    إنشاء حساب أدمن افتراضي مرة واحدة فقط:
-    - username: admin
-    - password: Admin123!  (غيّره بعد أول دخول)
-    - balance: 1000 USD
-    """
-    # نستخدم اتصال مباشر لأن هذه الدالة تُستدعى عند تحميل الملف
-    if USE_POSTGRES:
-        if psycopg2 is None:
-            raise RuntimeError("psycopg2 missing. Add psycopg2-binary to requirements.txt")
-        db = PGConnectionWrapper(psycopg2.connect(DATABASE_URL))
-    else:
-        db = sqlite3.connect(DB_PATH)
-        db.row_factory = sqlite3.Row
+        if "ref_type" not in cols_not:
+            cur.execute("ALTER TABLE notifications ADD COLUMN ref_type TEXT")
+        if "ref_id" not in cols_not:
+            cur.execute("ALTER TABLE notifications ADD COLUMN ref_id INTEGER")
 
-    row = db.execute(_sql("SELECT id FROM users WHERE username = ?"), ("admin",)).fetchone()
-    if row:
+        # ✅ (NEW) telegram_link_codes table في SQLite
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_link_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform_user_id INTEGER NOT NULL,
+                code TEXT UNIQUE NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                used_by_telegram_id INTEGER
+            );
+        """)
+
+        db.commit()
         db.close()
         return
-
-    password_hash = generate_password_hash("Admin123!")
-
-    if USE_POSTGRES:
-        admin_id = db.execute(
-            _sql("""
-                INSERT INTO users (username, email, phone, password_hash, is_admin)
-                VALUES (?, ?, ?, ?, TRUE)
-                RETURNING id
-            """),
-            ("admin", "admin@example.com", "", password_hash),
-        ).fetchone()["id"]
-    else:
-        cur = db.execute(
-            """
-            INSERT INTO users (username, email, phone, password_hash, is_admin)
-            VALUES (?, ?, ?, ?, 1)
-            """,
-            ("admin", "admin@example.com", "", password_hash),
-        )
-        admin_id = cur.lastrowid
-
-    # إنشاء أرصدة 0 لكل العملات
-    for c in CURRENCIES:
-        db.execute(
-            _sql("INSERT INTO balances (user_id, currency, amount) VALUES (?, ?, 0) ON CONFLICT DO NOTHING")
-            if USE_POSTGRES
-            else "INSERT OR IGNORE INTO balances (user_id, currency, amount) VALUES (?, ?, 0)",
-            (admin_id, c),
-        )
-
-    # شحن 1000 USD
-    db.execute(
-        _sql("UPDATE balances SET amount = amount + ? WHERE user_id = ? AND currency = ?"),
-        (1000.0, admin_id, "USD"),
-    )
-
-    # تسجيل العملية
-    db.execute(
-        _sql("""
-            INSERT INTO transactions (user_id, type, amount, currency, details, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """),
-        (
-            admin_id,
-            "Initial Admin Balance",
-            1000.0,
-            "USD",
-            "Initial admin credit",
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        ),
-    )
-
-    db.commit()
-    db.close()
-    print("✅ Default admin created with 1000 USD.")
-
-
-# استدعاء الإنشاء + إنشاء الأدمن الافتراضي مرة واحدة عند تحميل الملف
-init_db()
-ensure_default_admin()
-
 # ==============================
 # دوال مساعدة على مستوى المستخدمين
 # ==============================
@@ -658,10 +750,37 @@ def get_user(username):
         "phone": row.get("phone") if isinstance(row, dict) else row["phone"],
         "password_hash": row["password_hash"],
         "is_admin": bool(row["is_admin"]),
+        "email_verified": bool(
+            row.get("email_verified", 0) if isinstance(row, dict)
+            else (
+                row["email_verified"]
+                if (hasattr(row, "keys") and "email_verified" in row.keys())
+                else 0
+            )
+        ),
         "balance": balance,
         "transactions": transactions,
     }
 
+def get_user_by_email(email: str):
+    """
+    ترجع نفس dict المستخدم التي ترجعها get_user،
+    لكن حسب البريد.
+    """
+    if not email:
+        return None
+
+    db = get_db()
+    row = db.execute(
+        _sql("SELECT username FROM users WHERE email = ?"),
+        (email,),
+    ).fetchone()
+
+    if not row:
+        return None
+
+    username = row["username"] if isinstance(row, dict) else row[0]
+    return get_user(username)
 
 def change_balance(user_id, currency, delta):
     db = get_db()
@@ -1531,15 +1650,162 @@ def login():
         password = request.form.get("password", "")
 
         user = get_user(username)
-        if user and check_password_hash(user.get("password_hash", ""), password):
-            session["username"] = username
-            session["is_admin"] = bool(user.get("is_admin", False))
-            return redirect(url_for("index"))
 
-        flash("❌ اسم المستخدم أو كلمة المرور غير صحيحة", "error")
+        # أولاً: التحقق من صحة اسم المستخدم/كلمة المرور
+        if not user or not check_password_hash(user.get("password_hash", ""), password):
+            flash("❌ اسم المستخدم أو كلمة المرور غير صحيحة", "error")
+            return render_template("login.html")
+
+        # ثانياً: منع الدخول إذا لم يتم تفعيل البريد (باستثناء الأدمن)
+        if not user.get("is_admin", False):
+            email_verified = bool(user.get("email_verified", False))
+            if not email_verified:
+                email = user.get("email") or ""
+                if email:
+                    # توليد توكن جديد وإرساله بالبريد
+                    token = secrets.token_urlsafe(32)
+                    now_str = _now_str()
+                    db = get_db()
+                    db.execute(
+                        _sql("""
+                            UPDATE users
+                            SET email_verify_token = ?, email_verify_sent_at = ?
+                            WHERE id = ?
+                        """),
+                        (token, now_str, user["id"]),
+                    )
+                    db.commit()
+
+                    # إرسال إيميل التفعيل
+                    try:
+                        send_verification_email(email, token)
+                    except Exception as e:
+                        logging.error("send_verification_email in login: %s", e)
+
+                    flash(
+                        "📧 يجب تفعيل بريدك الإلكتروني قبل تسجيل الدخول. "
+                        "تم إرسال رابط تفعيل جديد إلى بريدك.",
+                        "error",
+                    )
+                else:
+                    flash(
+                        "📧 لا يوجد بريد إلكتروني محفوظ لهذا الحساب. "
+                        "يرجى التواصل مع الدعم لتفعيل حسابك.",
+                        "error",
+                    )
+                return render_template("login.html")
+
+        # كل شيء تمام → تسجيل الدخول
+        session["username"] = user["username"]
+        session["is_admin"] = bool(user.get("is_admin", False))
+        return redirect(url_for("index"))
 
     return render_template("login.html")
 
+@app.route("/forgot_password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip()
+
+        if not email:
+            flash("❌ يرجى إدخال البريد الإلكتروني.", "error")
+            return render_template("forgot_password.html")
+
+        user = get_user_by_email(email)
+
+        # نرجع نفس الرسالة سواء كان البريد موجوداً أم لا (لأسباب أمان)
+        if not user:
+            flash("✅ إذا كان البريد مسجلاً لدينا فستصلك رسالة تحتوي على رابط إعادة التعيين.", "success")
+            return redirect(url_for("login"))
+
+        # توليد توكن وتخزينه
+        token = secrets.token_urlsafe(32)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        db = get_db()
+        db.execute(
+            _sql(
+                "UPDATE users SET password_reset_token = ?, password_reset_sent_at = ? WHERE id = ?"
+            ),
+            (token, now_str, user["id"]),
+        )
+        db.commit()
+
+        # إرسال البريد
+        send_password_reset_email(email, token)
+
+        flash("✅ إذا كان البريد مسجلاً لدينا فستصلك رسالة تحتوي على رابط إعادة التعيين.", "success")
+        return redirect(url_for("login"))
+
+    # GET
+    return render_template("forgot_password.html")    
+
+@app.route("/reset_password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    if not token:
+        flash("رابط غير صالح.", "error")
+        return redirect(url_for("login"))
+
+    db = get_db()
+    row = db.execute(
+        _sql("SELECT * FROM users WHERE password_reset_token = ?"),
+        (token,),
+    ).fetchone()
+
+    if not row:
+        flash("❌ رابط إعادة التعيين غير صالح أو مستخدم من قبل.", "error")
+        return redirect(url_for("login"))
+
+    # نحاول التأكد من عدم قدم الرابط (مثلاً أكبر من 24 ساعة)
+    sent_at_raw = row.get("password_reset_sent_at") if isinstance(row, dict) else row["password_reset_sent_at"]
+    if sent_at_raw:
+        try:
+            sent_at = datetime.strptime(str(sent_at_raw)[:19], "%Y-%m-%d %H:%M:%S")
+            if datetime.now() - sent_at > timedelta(hours=24):
+                flash("⏰ انتهت صلاحية رابط إعادة التعيين. اطلب رابطاً جديداً.", "error")
+                return redirect(url_for("forgot_password"))
+        except Exception:
+            pass
+
+    user_id = row["id"] if isinstance(row, dict) else row[0]
+
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+
+        if password != confirm:
+            flash("❌ كلمتا المرور غير متطابقتين.", "error")
+            return render_template("reset_password.html", token=token)
+
+        # (اختياري) التحقق من قوة كلمة المرور
+        try:
+            error_msg = validate_password_strength(password)
+            if error_msg:
+                flash(error_msg, "error")
+                return render_template("reset_password.html", token=token)
+        except NameError:
+            # إذا لم تكن دالة validate_password_strength موجودة، نتجاهل هذا التحقق
+            pass
+
+        hashed_pw = generate_password_hash(password)
+
+        db.execute(
+            _sql(
+                """
+                UPDATE users
+                SET password_hash = ?, password_reset_token = NULL, password_reset_sent_at = NULL
+                WHERE id = ?
+                """
+            ),
+            (hashed_pw, user_id),
+        )
+        db.commit()
+
+        flash("✅ تم تحديث كلمة المرور بنجاح. يمكنك تسجيل الدخول الآن.", "success")
+        return redirect(url_for("login"))
+
+    # GET: عرض النموذج
+    return render_template("reset_password.html", token=token)    
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
@@ -1550,31 +1816,117 @@ def register():
         password = request.form.get("password", "")
         confirm = request.form.get("confirm_password", "")
 
-        if not username or not password:
-            flash("❌ يجب إدخال اسم مستخدم وكلمة مرور", "error")
+        # تحقق من المدخلات
+        if not username or not email or not password:
+            flash("❌ يجب إدخال اسم مستخدم وبريد إلكتروني وكلمة مرور", "error")
             return render_template("register.html")
 
+        # تحقق شكل الإيميل
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+            flash("❌ بريد إلكتروني غير صالح", "error")
+            return render_template("register.html")
+
+        # تأكيد كلمة المرور
         if password != confirm:
             flash("❌ كلمتا المرور غير متطابقتين", "error")
             return render_template("register.html")
 
+        # قوة كلمة المرور (8 أحرف + حرف كبير + حرف صغير + رقم)
+        pwd_pattern = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$")
+        if not pwd_pattern.match(password):
+            flash(
+                "❌ كلمة المرور يجب أن تحتوي على 8 أحرف على الأقل وتضم حرفاً كبيراً وحرفاً صغيراً ورقماً.",
+                "error",
+            )
+            return render_template("register.html")
+
+        # التأكد من أن اسم المستخدم غير مستعمل
         if get_user(username):
             flash("❌ اسم المستخدم موجود بالفعل", "error")
+            return render_template("register.html")
+
+        # التأكد من أن البريد غير مستعمل
+        db = get_db()
+        existing_email = db.execute(
+            _sql("SELECT id FROM users WHERE email = ?"),
+            (email,),
+        ).fetchone()
+        if existing_email:
+            flash("❌ هذا البريد الإلكتروني مستعمل من قبل", "error")
             return render_template("register.html")
 
         hashed_pw = generate_password_hash(password)
 
         try:
-            create_user(username, email, phone, hashed_pw, is_admin=False)
-        except Exception:
-            flash("❌ اسم المستخدم موجود بالفعل", "error")
-            return render_template("register.html")
+            user_id = create_user(username, email, phone, hashed_pw, is_admin=False)
 
-        flash("✅ تم إنشاء الحساب بنجاح", "success")
-        return redirect(url_for("login"))
+            # إنشاء توكن التفعيل
+            verify_token = secrets.token_urlsafe(32)
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            db.execute(
+                _sql("""
+                    UPDATE users
+                    SET email_verify_token = ?, email_verify_sent_at = ?, email_verified = ?
+                    WHERE id = ?
+                """),
+                (verify_token, now_str, False if USE_POSTGRES else 0, user_id),
+            )
+            db.commit()
+
+            # إرسال إيميل التفعيل
+            link = send_verification_email(email, verify_token)
+
+            # في حال عدم تفعيل SMTP نُظهر الرابط للمطور كحل مؤقت
+            if not SMTP_HOST or not SMTP_USERNAME or not SMTP_PASSWORD:
+                flash(
+                    f"✅ تم إنشاء الحساب. (وضع التطوير) رابط التفعيل: {link}",
+                    "info",
+                )
+            else:
+                flash("✅ تم إنشاء الحساب. يرجى فحص بريدك الإلكتروني لتفعيل الحساب.", "success")
+
+            return redirect(url_for("login"))
+
+        except Exception as e:
+            logging.error("register error: %s", e)
+            flash("❌ حدث خطأ أثناء إنشاء الحساب", "error")
+            return render_template("register.html")
 
     return render_template("register.html")
 
+@app.route("/verify_email/<token>")
+def verify_email(token):
+    db = get_db()
+    row = db.execute(
+        _sql("SELECT id, email_verified FROM users WHERE email_verify_token = ?"),
+        (token,),
+    ).fetchone()
+
+    if not row:
+        flash("❌ رابط التفعيل غير صالح أو منتهي.", "error")
+        return redirect(url_for("login"))
+
+    user_id = row["id"]
+    already = row["email_verified"]
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db.execute(
+        _sql("""
+            UPDATE users
+            SET email_verified = ?, email_verify_token = NULL, email_verify_sent_at = ?
+            WHERE id = ?
+        """),
+        (True if USE_POSTGRES else 1, now_str, user_id),
+    )
+    db.commit()
+
+    if already:
+        flash("ℹ️ هذا الحساب مفعّل بالفعل.", "info")
+    else:
+        flash("✅ تم تفعيل حسابك بنجاح، يمكنك الآن تسجيل الدخول.", "success")
+
+    return redirect(url_for("login"))    
 
 @app.route("/convert_currency", methods=["POST"])
 def convert_currency_route():
@@ -2738,15 +3090,6 @@ def transfer_to_bot_10():
     db.commit()
     flash("✅ تم تحويل 10$ إلى رصيد البوت بنجاح.", "success")
     return redirect(url_for("link_telegram"))    
-
-# ==============================
-# توافق قديم: ensure_admin (بدون تكرار)
-# ==============================
-def ensure_admin():
-    ensure_default_admin()
-
-
-ensure_admin()
 
 # ==============================
 # تشغيل التطبيق
