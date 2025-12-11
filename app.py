@@ -2359,14 +2359,15 @@ def telegram_webhook():
             )
 
             keyboard = {
-                "inline_keyboard": [
-                    [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
-                    [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
-                    [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
-                    [{"text": "💸 تحويل الرصيد / Transfer balance", "callback_data": "transfer_balance"}],
-                    [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
-                ]
-            }
+        "inline_keyboard": [
+            [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
+            [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
+            [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
+            [{"text": "💰 الرصيد / Wallet", "callback_data": "wallet"}],
+            [{"text": "💸 تحويل الرصيد / Transfer balance", "callback_data": "transfer_balance"}],
+            [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
+        ]
+    }
 
             tg_send_message(chat_id, welcome_text, reply_markup=keyboard)
             return "ok", 200
@@ -2386,6 +2387,7 @@ def telegram_webhook():
         if callback_id:
             tg_answer_callback(callback_id)
 
+        # 👥 نظام الإحالات
         if data == "referrals":
             ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
 
@@ -2413,6 +2415,36 @@ def telegram_webhook():
             tg_send_message(chat_id, msg)
             return "ok", 200
 
+        # 💰 الرصيد (البوت + الإحالات)
+        if data == "wallet":
+            try:
+                wallet = get_telegram_wallet(int(tg_id))
+            except Exception:
+                wallet = None
+
+            if not wallet:
+                tg_send_message(
+                    chat_id,
+                    "ℹ️ لا يوجد حساب تيليجرام مسجَّل بعد. أرسل /start أولاً."
+                )
+                return "ok", 200
+
+            bot_bal = float(wallet.get("bot_balance_usd", 0.0))
+            ref_bal = float(wallet.get("referral_credits_usd", 0.0))
+            total = bot_bal + ref_bal
+
+            msg = (
+                "💰 <b>رصيدك في البوت</b>\n\n"
+                f"الرصيد الأساسي (البوت): <b>{bot_bal:.3f}$</b>\n"
+                f"رصيد الإحالات: <b>{ref_bal:.3f}$</b>\n"
+                "-------------------------\n"
+                f"الإجمالي المتاح: <b>{total:.3f}$</b>\n\n"
+                "يمكنك لاحقاً تحويل هذا الرصيد إلى المنصة (USD) بعد ربط حسابك."
+            )
+            tg_send_message(chat_id, msg)
+            return "ok", 200
+
+        # 🧰 الخدمات الفرعية
         if data == "services":
             msg = (
                 "🧰 <b>الخدمات الفرعية</b>\n\n"
@@ -2422,7 +2454,7 @@ def telegram_webhook():
             tg_send_message(chat_id, msg)
             return "ok", 200
         
-        # ✅ (NEW) تحويل الرصيد
+        # 💸 تحويل الرصيد
         if data == "transfer_balance":
             msg = (
                 "💸 <b>تحويل الرصيد</b>\n\n"
@@ -2434,7 +2466,7 @@ def telegram_webhook():
             tg_send_message(chat_id, msg)
             return "ok", 200
 
-        # ✅ (NEW) شرح الربط
+        # 🔗 شرح الربط
         if data == "link_account":
             link_url = f"{SITE_PUBLIC_URL}/link_telegram"
             msg = (
@@ -2451,7 +2483,6 @@ def telegram_webhook():
             tg_send_message(chat_id, "الخيار غير معروف حالياً.")
 
         return "ok", 200
-
 # ==============================
 # ✅ (NEW) ربط الحساب من المنصة (routes)
 # ==============================
