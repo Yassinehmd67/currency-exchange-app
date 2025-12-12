@@ -76,18 +76,16 @@ SITE_PUBLIC_URL = os.getenv(
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 EMAIL_FROM = os.getenv("EMAIL_FROM", "support@esms44.shop")
-SITE_PUBLIC_URL = os.getenv("SITE_PUBLIC_URL", "http://127.0.0.1:5000")
 
 resend.api_key = RESEND_API_KEY
 
-def send_verification_email(to_email: str, token: str):
+def send_verification_email(to_email: str, token: str) -> str:
     verify_url = f"{SITE_PUBLIC_URL}/verify_email/{token}"
     subject = "تفعيل البريد الإلكتروني"
     html = f"""
     <p>مرحباً 👋</p>
     <p>اضغط على الرابط لتفعيل بريدك:</p>
     <p><a href="{verify_url}">{verify_url}</a></p>
-    <p>إذا لم تقم بإنشاء هذا الحساب، تجاهل هذه الرسالة.</p>
     """
 
     resend.Emails.send({
@@ -96,6 +94,8 @@ def send_verification_email(to_email: str, token: str):
         "subject": subject,
         "html": html
     })
+
+    return verify_url
 # ==============================
 # Telegram Linking + Bot Wallet settings
 # ==============================
@@ -1726,18 +1726,16 @@ def register():
             )
             db.commit()
 
+            # إرسال إيميل التفعيل عبر Resend
             send_verification_email(email, verify_token)
 
-            flash(
-                "✅ تم إنشاء الحساب. يرجى فحص بريدك الإلكتروني لتفعيل الحساب.",
-                "success",
-            )
+            flash("✅ تم إنشاء الحساب. يرجى فحص بريدك الإلكتروني لتفعيل الحساب.", "success")
 
         except Exception as e:
-            logging.error("register error (verification email): %s", e)
+            logging.exception("register error (verification email): %s", e)
             flash(
                 "✅ تم إنشاء الحساب، لكن تعذر إرسال بريد التفعيل حالياً. "
-                "يرجى المحاولة لاحقاً أو التواصل مع الدعم.",
+                "حاول لاحقاً أو تواصل مع الدعم.",
                 "info",
             )
 
