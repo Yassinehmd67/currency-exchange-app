@@ -92,8 +92,8 @@ def send_verification_email(to_email: str, token: str) -> str:
     if not to_email:
         return ""
 
-    verify_path = url_for("verify_email", token=token)
-    verify_link = f"{SITE_PUBLIC_URL.rstrip('/')}{verify_path}"
+    # ✅ خَلِّ Flask يبني رابط كامل بالـ domain الصحيح
+    verify_link = url_for("verify_email", token=token, _external=True)
 
     subject = "تفعيل حسابك - Currency Exchange"
     body = (
@@ -119,51 +119,9 @@ def send_verification_email(to_email: str, token: str) -> str:
         except Exception as e:
             logging.error("Error sending verification email: %s", e)
     else:
-        # وضع التطوير: نطبع الرابط في اللوج
         logging.info("Verification link for %s: %s", to_email, verify_link)
 
     return verify_link
-
-def send_password_reset_email(to_email: str, token: str) -> str:
-    """
-    يرسل إيميل إعادة تعيين كلمة المرور (إن كانت إعدادات SMTP جاهزة)،
-    ويرجع رابط إعادة التعيين مهما كان.
-    """
-    if not to_email:
-        return ""
-
-    reset_path = url_for("reset_password", token=token, _external=False)
-    reset_link = f"{SITE_PUBLIC_URL.rstrip('/')}{reset_path}"
-
-    subject = "إعادة تعيين كلمة المرور - Currency Exchange"
-    body = (
-        "مرحباً،\n\n"
-        "وصلتنا طلبية لإعادة تعيين كلمة المرور لحسابك.\n"
-        "لإعادة تعيين كلمة المرور، يرجى الضغط على الرابط التالي:\n\n"
-        f"{reset_link}\n\n"
-        "إذا لم تقم أنت بهذا الطلب، يمكنك تجاهل هذه الرسالة.\n"
-    )
-
-    if SMTP_HOST and SMTP_USERNAME and SMTP_PASSWORD:
-        try:
-            msg = MIMEText(body, "plain", "utf-8")
-            msg["Subject"] = subject
-            msg["From"] = SMTP_USERNAME
-            msg["To"] = to_email
-
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-                if SMTP_USE_TLS:
-                    server.starttls()
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.send_message(msg)
-        except Exception as e:
-            logging.error("Error sending password reset email: %s", e)
-    else:
-        # وضع التطوير: نطبع الرابط في اللوج
-        logging.info("Password reset link for %s: %s", to_email, reset_link)
-
-    return reset_link    
-
 # ==============================
 # Telegram Linking + Bot Wallet settings
 # ==============================
@@ -516,7 +474,10 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_platform_user_id ON telegram_link_codes(platform_user_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_user_id ON telegram_link_codes(user_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_expires_at ON telegram_link_codes(expires_at);")
-
+        # ✅ مهم جداً: اعتماد كل تعديلات الجداول وإغلاق الاتصال
+        db.commit()
+        db.close()
+        return
         # ✅ (NEW) telegram_users: رصيد البوت (يخصم منه أولاً قبل رصيد الإحالات)
     # ==============================
     # SQLite upgrades (local file)
@@ -1615,7 +1576,8 @@ def attach_main_menu_button(kb=None):
         [{"text": "🏠 القائمة الرئيسية", "callback_data": "main_menu"}]
     )
     return kb    
-
+# تهيئة قاعدة البيانات عند تحميل الملف
+    init_db()
 # ==============================
 # المسارات الأساسية (المستخدم)
 # ==============================
@@ -1811,27 +1773,27 @@ def reset_password(token):
 def register():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
-        email = request.form.get("email", "").strip()
-        phone = request.form.get("phone", "").strip()
+        email    = request.form.get("email", "").strip()
+        phone    = request.form.get("phone", "").strip()
         password = request.form.get("password", "")
-        confirm = request.form.get("confirm_password", "")
+        confirm  = request.form.get("confirm_password", "")
 
-        # تحقق من المدخلات
+        # ✅ تحقق من المدخلات
         if not username or not email or not password:
             flash("❌ يجب إدخال اسم مستخدم وبريد إلكتروني وكلمة مرور", "error")
             return render_template("register.html")
 
-        # تحقق شكل الإيميل
+        # ✅ شكل الإيميل
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
             flash("❌ بريد إلكتروني غير صالح", "error")
             return render_template("register.html")
 
-        # تأكيد كلمة المرور
+        # ✅ تأكيد كلمة المرور
         if password != confirm:
             flash("❌ كلمتا المرور غير متطابقتين", "error")
             return render_template("register.html")
 
-        # قوة كلمة المرور (8 أحرف + حرف كبير + حرف صغير + رقم)
+        # ✅ قوة كلمة المرور (8 أحرف + حرف كبير + حرف صغير + رقم)
         pwd_pattern = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$")
         if not pwd_pattern.match(password):
             flash(
@@ -1840,12 +1802,12 @@ def register():
             )
             return render_template("register.html")
 
-        # التأكد من أن اسم المستخدم غير مستعمل
+        # ✅ التأكد من أن اسم المستخدم غير مستعمل
         if get_user(username):
             flash("❌ اسم المستخدم موجود بالفعل", "error")
             return render_template("register.html")
 
-        # التأكد من أن البريد غير مستعمل
+        # ✅ التأكد من أن البريد غير مستعمل
         db = get_db()
         existing_email = db.execute(
             _sql("SELECT id FROM users WHERE email = ?"),
@@ -1857,10 +1819,21 @@ def register():
 
         hashed_pw = generate_password_hash(password)
 
+        # ==============================
+        # 1) إنشاء المستخدم فقط
+        # ==============================
         try:
             user_id = create_user(username, email, phone, hashed_pw, is_admin=False)
+        except Exception as e:
+            logging.error("register error (create_user): %s", e)
+            flash("❌ حدث خطأ أثناء إنشاء الحساب، حاول مرة أخرى.", "error")
+            return render_template("register.html")
 
-            # إنشاء توكن التفعيل
+        # ==============================
+        # 2) توليد توكن التفعيل + إرسال الإيميل
+        #    (لو فشل لا نلغي التسجيل)
+        # ==============================
+        try:
             verify_token = secrets.token_urlsafe(32)
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -1877,7 +1850,7 @@ def register():
             # إرسال إيميل التفعيل
             link = send_verification_email(email, verify_token)
 
-            # في حال عدم تفعيل SMTP نُظهر الرابط للمطور كحل مؤقت
+            # وضع التطوير (SMTP غير مفعّل)
             if not SMTP_HOST or not SMTP_USERNAME or not SMTP_PASSWORD:
                 flash(
                     f"✅ تم إنشاء الحساب. (وضع التطوير) رابط التفعيل: {link}",
@@ -1886,12 +1859,16 @@ def register():
             else:
                 flash("✅ تم إنشاء الحساب. يرجى فحص بريدك الإلكتروني لتفعيل الحساب.", "success")
 
-            return redirect(url_for("login"))
-
         except Exception as e:
-            logging.error("register error: %s", e)
-            flash("❌ حدث خطأ أثناء إنشاء الحساب", "error")
-            return render_template("register.html")
+            # لا نُسقط التسجيل لو فشل الإيميل؛ فقط نسجل الخطأ
+            logging.error("register error (verification email): %s", e)
+            flash(
+                "✅ تم إنشاء الحساب، لكن تعذر إرسال بريد التفعيل حالياً. "
+                "حاول لاحقاً أو تواصل مع الدعم.",
+                "info",
+            )
+
+        return redirect(url_for("login"))
 
     return render_template("register.html")
 
