@@ -85,15 +85,11 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip() == "1"
 
 def send_verification_email(to_email: str, token: str) -> str:
-    """
-    يرسل إيميل تفعيل (إن كانت إعدادات SMTP جاهزة)،
-    ويرجع رابط التفعيل مهما كان.
-    """
     if not to_email:
         return ""
 
-    # ✅ خَلِّ Flask يبني رابط كامل بالـ domain الصحيح
-    verify_link = url_for("verify_email", token=token, _external=True)
+    verify_path = url_for("verify_email", token=token)
+    verify_link = f"{SITE_PUBLIC_URL.rstrip('/')}{verify_path}"
 
     subject = "تفعيل حسابك - Currency Exchange"
     body = (
@@ -103,6 +99,13 @@ def send_verification_email(to_email: str, token: str) -> str:
         f"{verify_link}\n\n"
         "إذا لم تقم بالتسجيل، يمكنك تجاهل هذه الرسالة.\n"
     )
+
+    # ✅ أضف هنا (قبل if)
+    logging.info(
+        "SMTP_HOST=%s SMTP_PORT=%s SMTP_USERNAME=%s TLS=%s",
+        SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_USE_TLS
+    )
+    logging.info("SMTP_PASSWORD is set? %s", bool(SMTP_PASSWORD))
 
     if SMTP_HOST and SMTP_USERNAME and SMTP_PASSWORD:
         try:
@@ -116,8 +119,9 @@ def send_verification_email(to_email: str, token: str) -> str:
                     server.starttls()
                 server.login(SMTP_USERNAME, SMTP_PASSWORD)
                 server.send_message(msg)
-        except Exception as e:
-            logging.error("Error sending verification email: %s", e)
+        except Exception:
+            # ✅ استبدل logging.error بـ logging.exception
+            logging.exception("Error sending verification email (full traceback)")
     else:
         logging.info("Verification link for %s: %s", to_email, verify_link)
 
