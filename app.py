@@ -1,12 +1,11 @@
 import os
+import resend
 import json
 import re
 import sqlite3
 import logging
 import hashlib
 import requests  # Telegram Bot API
-import smtplib
-from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 
@@ -75,57 +74,28 @@ SITE_PUBLIC_URL = os.getenv(
     "https://currency-exchange-app-2ymh.onrender.com"
 )
 
-# ==============================
-# إعدادات إرسال البريد الإلكتروني
-# ==============================
-SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USERNAME = os.getenv("SMTP_USERNAME", "").strip()
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip() == "1"
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+EMAIL_FROM = os.getenv("EMAIL_FROM", "support@esms44.shop")
+SITE_PUBLIC_URL = os.getenv("SITE_PUBLIC_URL", "http://127.0.0.1:5000")
 
-def send_verification_email(to_email: str, token: str) -> str:
-    if not to_email:
-        return ""
+resend.api_key = RESEND_API_KEY
 
-    verify_path = url_for("verify_email", token=token)
-    verify_link = f"{SITE_PUBLIC_URL.rstrip('/')}{verify_path}"
+def send_verification_email(to_email: str, token: str):
+    verify_url = f"{SITE_PUBLIC_URL}/verify_email/{token}"
+    subject = "تفعيل البريد الإلكتروني"
+    html = f"""
+    <p>مرحباً 👋</p>
+    <p>اضغط على الرابط لتفعيل بريدك:</p>
+    <p><a href="{verify_url}">{verify_url}</a></p>
+    <p>إذا لم تقم بإنشاء هذا الحساب، تجاهل هذه الرسالة.</p>
+    """
 
-    subject = "تفعيل حسابك - Currency Exchange"
-    body = (
-        "مرحباً،\n\n"
-        "شكراً لتسجيلك في منصة تحويل العملات.\n"
-        "لإتمام التفعيل، يرجى الضغط على الرابط التالي:\n\n"
-        f"{verify_link}\n\n"
-        "إذا لم تقم بالتسجيل، يمكنك تجاهل هذه الرسالة.\n"
-    )
-
-    # ✅ أضف هنا (قبل if)
-    logging.info(
-        "SMTP_HOST=%s SMTP_PORT=%s SMTP_USERNAME=%s TLS=%s",
-        SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_USE_TLS
-    )
-    logging.info("SMTP_PASSWORD is set? %s", bool(SMTP_PASSWORD))
-
-    if SMTP_HOST and SMTP_USERNAME and SMTP_PASSWORD:
-        try:
-            msg = MIMEText(body, "plain", "utf-8")
-            msg["Subject"] = subject
-            msg["From"] = SMTP_USERNAME
-            msg["To"] = to_email
-
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-                if SMTP_USE_TLS:
-                    server.starttls()
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.send_message(msg)
-        except Exception:
-            # ✅ استبدل logging.error بـ logging.exception
-            logging.exception("Error sending verification email (full traceback)")
-    else:
-        logging.info("Verification link for %s: %s", to_email, verify_link)
-
-    return verify_link
+    resend.Emails.send({
+        "from": EMAIL_FROM,
+        "to": [to_email],
+        "subject": subject,
+        "html": html
+    })
 # ==============================
 # Telegram Linking + Bot Wallet settings
 # ==============================
@@ -246,23 +216,6 @@ def get_db():
             g.db.row_factory = sqlite3.Row
     return g.db
 
-def _pg_column_exists(cur, table_name: str, column_name: str) -> bool:
-    """
-    Postgres: يتحقق هل عمود موجود داخل جدول أم لا.
-    مهم لتوافق السكيما القديمة والجديدة بدون كسر.
-    """
-    cur.execute(
-        """
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = %s AND column_name = %s
-        LIMIT 1
-        """,
-        (table_name, column_name),
-    )
-    return cur.fetchone() is not None
-
-
 def _now_str() -> str:
     # UTC time string ثابتة
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -282,6 +235,7 @@ def _pg_column_exists(cur, table_name: str, column_name: str) -> bool:
     )
     return cur.fetchone() is not None
 
+
 @app.teardown_appcontext
 def close_db(exc):
     db = g.pop("db", None)
@@ -299,7 +253,8 @@ def init_db():
 
         db = psycopg2.connect(DATABASE_URL)
         cur = db.cursor()
-        
+
+        # ---------- users ----------
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id BIGSERIAL PRIMARY KEY,
@@ -311,128 +266,128 @@ def init_db():
                 email_verified BOOLEAN DEFAULT FALSE,
                 email_verify_token TEXT,
                 email_verify_sent_at TEXT,
+                password_reset_token TEXT,
+                password_reset_sent_at TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
             );
         """)
 
-        # ترقية جدول users لو كان قديماً (في حال كان موجوداً بدون الأعمدة الجديدة)
-        cur.execute("""
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;
-        """)
-        cur.execute("""
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS email_verify_token TEXT;
-        """)
-        cur.execute("""
-            ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS email_verify_sent_at TEXT;
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS balances (
-            id BIGSERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            currency TEXT NOT NULL,
-            amount DOUBLE PRECISION NOT NULL DEFAULT 0,
-            UNIQUE(user_id, currency)
-        );
-        """)
-
-        # أعمدة خاصة بإعادة تعيين كلمة المرور (Postgres)
+        # ترقية جدول users لو كان قديماً
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_token TEXT;")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_sent_at TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_sent_at TEXT;")
 
+        # ---------- balances ----------
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS transactions (
-            id BIGSERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            type TEXT NOT NULL,
-            amount DOUBLE PRECISION NOT NULL,
-            currency TEXT,
-            details TEXT,
-            timestamp TEXT NOT NULL
-        );
+            CREATE TABLE IF NOT EXISTS balances (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                currency TEXT NOT NULL,
+                amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+                UNIQUE(user_id, currency)
+            );
         """)
 
+        # ---------- transactions ----------
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS pending_deposits (
-            id BIGSERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            amount DOUBLE PRECISION NOT NULL,
-            fiat_currency TEXT NOT NULL,
-            pay_method TEXT,
-            status TEXT DEFAULT 'pending',
-            txid TEXT,
-            timestamp TEXT NOT NULL,
-            processed_by TEXT,
-            processed_at TEXT
-        );
+            CREATE TABLE IF NOT EXISTS transactions (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                type TEXT NOT NULL,
+                amount DOUBLE PRECISION NOT NULL,
+                currency TEXT,
+                details TEXT,
+                timestamp TEXT NOT NULL
+            );
         """)
 
+        # ---------- pending_deposits ----------
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS pending_withdrawals (
-            id BIGSERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            amount DOUBLE PRECISION NOT NULL,
-            currency TEXT NOT NULL,
-            payout_info TEXT,
-            status TEXT DEFAULT 'pending',
-            timestamp TEXT NOT NULL,
-            processed_by TEXT,
-            processed_at TEXT
-        );
+            CREATE TABLE IF NOT EXISTS pending_deposits (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                amount DOUBLE PRECISION NOT NULL,
+                fiat_currency TEXT NOT NULL,
+                pay_method TEXT,
+                status TEXT DEFAULT 'pending',
+                txid TEXT,
+                timestamp TEXT NOT NULL,
+                processed_by TEXT,
+                processed_at TEXT
+            );
         """)
 
+        # ---------- pending_withdrawals ----------
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS notifications (
-            id BIGSERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            title TEXT NOT NULL,
-            body TEXT NOT NULL,
-            type TEXT,
-            is_read INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL,
-            ref_type TEXT,
-            ref_id BIGINT
-        );
+            CREATE TABLE IF NOT EXISTS pending_withdrawals (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                amount DOUBLE PRECISION NOT NULL,
+                currency TEXT NOT NULL,
+                payout_info TEXT,
+                status TEXT DEFAULT 'pending',
+                timestamp TEXT NOT NULL,
+                processed_by TEXT,
+                processed_at TEXT
+            );
         """)
 
+        # ---------- notifications ----------
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS telegram_users (
-            id BIGSERIAL PRIMARY KEY,
-            telegram_id BIGINT UNIQUE NOT NULL,
-            username TEXT,
-            first_name TEXT,
-            last_name TEXT,
-            referred_by_telegram_id BIGINT,
-            referral_credits_usd DOUBLE PRECISION DEFAULT 0,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
-        );
+            CREATE TABLE IF NOT EXISTS notifications (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                type TEXT,
+                is_read INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                ref_type TEXT,
+                ref_id BIGINT
+            );
         """)
 
-        # ✅ (NEW) platform ↔ telegram linking (Postgres upgrades)
+        # ---------- telegram_users ----------
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_users (
+                id BIGSERIAL PRIMARY KEY,
+                telegram_id BIGINT UNIQUE NOT NULL,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                referred_by_telegram_id BIGINT,
+                referral_credits_usd DOUBLE PRECISION DEFAULT 0,
+                platform_user_id BIGINT,
+                linked_at TEXT,
+                bot_balance_usd DOUBLE PRECISION DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
+            );
+        """)
 
-        # 1) telegram_users: أعمدة الربط + رصيد البوت
+        # ترقية telegram_users لو كانت قديمة
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS referral_credits_usd DOUBLE PRECISION DEFAULT 0;")
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS linked_at TEXT;")
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS bot_balance_usd DOUBLE PRECISION DEFAULT 0;")
 
-        # 2) telegram_link_codes: إنشاء الجدول إن لم يوجد (بأقل قيود حتى لا نكسر سكيما قديمة)
+        # ---------- telegram_link_codes ----------
+        # (نموذج واحد واضح بدون تكرار)
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS telegram_link_codes (
-            id BIGSERIAL PRIMARY KEY,
-            platform_user_id BIGINT,
-            code TEXT,
-            code_hash TEXT,
-            expires_at TEXT,
-            used_at TEXT,
-            used_by_telegram_id BIGINT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
-        );
+            CREATE TABLE IF NOT EXISTS telegram_link_codes (
+                id BIGSERIAL PRIMARY KEY,
+                platform_user_id BIGINT,
+                code TEXT,
+                code_hash TEXT,
+                expires_at TEXT,
+                used_at TEXT,
+                used_by_telegram_id BIGINT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
+            );
         """)
 
-        # 3) ترقية الجدول إن كان موجود بسكيما قديمة
+        # ترقية telegram_link_codes لو كانت قديمة
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code TEXT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code_hash TEXT;")
@@ -441,182 +396,104 @@ def init_db():
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS used_by_telegram_id BIGINT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS created_at TEXT;")
 
-        # 4) Unique/Indexes (ضرورية لسرعة البحث + منع تكرارات)
+        # فهارس/قيود
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tlc_code ON telegram_link_codes(code);")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tlc_code_hash ON telegram_link_codes(code_hash);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_platform_user_id ON telegram_link_codes(platform_user_id);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_expires_at ON telegram_link_codes(expires_at);")
 
-    # ✅ (NEW) platform ↔ telegram linking (Postgres upgrades)
-        # 1) telegram_users: أعمدة الربط
-        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
-        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS linked_at TEXT;")
-
-        # 2) telegram_link_codes: إنشاء الجدول إن لم يوجد (سكيما جديدة)
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS telegram_link_codes (
-            id BIGSERIAL PRIMARY KEY,
-            platform_user_id BIGINT,
-            user_id BIGINT,
-            code TEXT,
-            expires_at TEXT,
-            used_at TEXT,
-            used_by_telegram_id BIGINT
-        );
-        """)
-
-        # 3) ترقية إن كان موجود بسكيما قديمة
-        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
-        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS user_id BIGINT;")
-        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code TEXT;")
-        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS expires_at TEXT;")
-        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS used_at TEXT;")
-        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS used_by_telegram_id BIGINT;")
-
-        # 4) قيود/فهارس
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tlc_code ON telegram_link_codes(code);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_platform_user_id ON telegram_link_codes(platform_user_id);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_user_id ON telegram_link_codes(user_id);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_expires_at ON telegram_link_codes(expires_at);")
-        # ✅ مهم جداً: اعتماد كل تعديلات الجداول وإغلاق الاتصال
         db.commit()
         db.close()
         return
-        # ✅ (NEW) telegram_users: رصيد البوت (يخصم منه أولاً قبل رصيد الإحالات)
+
     # ==============================
     # SQLite upgrades (local file)
     # ==============================
     if not USE_POSTGRES:
+        db = sqlite3.connect(DB_PATH)
+        db.row_factory = sqlite3.Row
+        cur = db.cursor()
+
         # users: أعمدة التحقق من البريد + إعادة تعيين كلمة المرور
-        cols_users = {
-            c["name"]
-            for c in cur.execute("PRAGMA table_info(users)").fetchall()
-        }
+        cols_users = {c[1] for c in cur.execute("PRAGMA table_info(users)").fetchall()} if cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='users';"
+        ).fetchone() else set()
 
-        if "email_verified" not in cols_users:
-            cur.execute(
-                "ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0"
-            )
-        if "email_verify_token" not in cols_users:
-            cur.execute("ALTER TABLE users ADD COLUMN email_verify_token TEXT")
-        if "email_verify_sent_at" not in cols_users:
-            cur.execute("ALTER TABLE users ADD COLUMN email_verify_sent_at TEXT")
+        if cols_users:
+            if "email_verified" not in cols_users:
+                cur.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0")
+            if "email_verify_token" not in cols_users:
+                cur.execute("ALTER TABLE users ADD COLUMN email_verify_token TEXT")
+            if "email_verify_sent_at" not in cols_users:
+                cur.execute("ALTER TABLE users ADD COLUMN email_verify_sent_at TEXT")
 
-        if "password_reset_token" not in cols_users:
-            cur.execute("ALTER TABLE users ADD COLUMN password_reset_token TEXT")
-        if "password_reset_sent_at" not in cols_users:
-            cur.execute("ALTER TABLE users ADD COLUMN password_reset_sent_at TEXT")
+            if "password_reset_token" not in cols_users:
+                cur.execute("ALTER TABLE users ADD COLUMN password_reset_token TEXT")
+            if "password_reset_sent_at" not in cols_users:
+                cur.execute("ALTER TABLE users ADD COLUMN password_reset_sent_at TEXT")
 
         # telegram_users: bot_balance_usd + referral_credits_usd + الربط
-        cols_tg = {
-            c["name"]
-            for c in cur.execute("PRAGMA table_info(telegram_users)").fetchall()
-        }
+        cols_tg = {c[1] for c in cur.execute("PRAGMA table_info(telegram_users)").fetchall()} if cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_users';"
+        ).fetchone() else set()
 
-        if "bot_balance_usd" not in cols_tg:
-            try:
-                cur.execute(
-                    "ALTER TABLE telegram_users "
-                    "ADD COLUMN bot_balance_usd REAL DEFAULT 0"
-                )
-            except Exception:
-                pass
-
-        if "referral_credits_usd" not in cols_tg:
-            cur.execute(
-                "ALTER TABLE telegram_users "
-                "ADD COLUMN referral_credits_usd REAL DEFAULT 0"
-            )
-        if "platform_user_id" not in cols_tg:
-            cur.execute(
-                "ALTER TABLE telegram_users "
-                "ADD COLUMN platform_user_id INTEGER"
-            )
-        if "linked_at" not in cols_tg:
-            cur.execute("ALTER TABLE telegram_users ADD COLUMN linked_at TEXT")
-
-        # ==== ترقية الجداول لو كانت قديمة ====
-
-        # pending_deposits
-        cols_dep = {
-            c["name"]
-            for c in cur.execute(
-                "PRAGMA table_info(pending_deposits)"
-            ).fetchall()
-        }
-        if "status" not in cols_dep:
-            cur.execute(
-                "ALTER TABLE pending_deposits "
-                "ADD COLUMN status TEXT DEFAULT 'pending'"
-            )
-        if "processed_by" not in cols_dep:
-            cur.execute(
-                "ALTER TABLE pending_deposits ADD COLUMN processed_by TEXT"
-            )
-        if "processed_at" not in cols_dep:
-            cur.execute(
-                "ALTER TABLE pending_deposits ADD COLUMN processed_at TEXT"
-            )
-
-        # pending_withdrawals
-        cols_w = {
-            c["name"]
-            for c in cur.execute(
-                "PRAGMA table_info(pending_withdrawals)"
-            ).fetchall()
-        }
-        if "status" not in cols_w:
-            cur.execute(
-                "ALTER TABLE pending_withdrawals "
-                "ADD COLUMN status TEXT DEFAULT 'pending'"
-            )
-        if "processed_by" not in cols_w:
-            cur.execute(
-                "ALTER TABLE pending_withdrawals ADD COLUMN processed_by TEXT"
-            )
-        if "processed_at" not in cols_w:
-            cur.execute(
-                "ALTER TABLE pending_withdrawals ADD COLUMN processed_at TEXT"
-            )
-
-        # notifications
-        cols_not = {
-            c["name"]
-            for c in cur.execute(
-                "PRAGMA table_info(notifications)"
-            ).fetchall()
-        }
-
-        if "body" not in cols_not:
-            cur.execute("ALTER TABLE notifications ADD COLUMN body TEXT")
-            if "message" in cols_not:
+        if cols_tg:
+            if "bot_balance_usd" not in cols_tg:
                 try:
-                    cur.execute(
-                        "UPDATE notifications "
-                        "SET body = message "
-                        "WHERE body IS NULL"
-                    )
+                    cur.execute("ALTER TABLE telegram_users ADD COLUMN bot_balance_usd REAL DEFAULT 0")
                 except Exception:
                     pass
+            if "referral_credits_usd" not in cols_tg:
+                cur.execute("ALTER TABLE telegram_users ADD COLUMN referral_credits_usd REAL DEFAULT 0")
+            if "platform_user_id" not in cols_tg:
+                cur.execute("ALTER TABLE telegram_users ADD COLUMN platform_user_id INTEGER")
+            if "linked_at" not in cols_tg:
+                cur.execute("ALTER TABLE telegram_users ADD COLUMN linked_at TEXT")
 
-        if "type" not in cols_not:
-            cur.execute("ALTER TABLE notifications ADD COLUMN type TEXT")
+        # pending_deposits upgrades
+        if cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_deposits';").fetchone():
+            cols_dep = {c[1] for c in cur.execute("PRAGMA table_info(pending_deposits)").fetchall()}
+            if "status" not in cols_dep:
+                cur.execute("ALTER TABLE pending_deposits ADD COLUMN status TEXT DEFAULT 'pending'")
+            if "processed_by" not in cols_dep:
+                cur.execute("ALTER TABLE pending_deposits ADD COLUMN processed_by TEXT")
+            if "processed_at" not in cols_dep:
+                cur.execute("ALTER TABLE pending_deposits ADD COLUMN processed_at TEXT")
 
-        if "is_read" not in cols_not:
-            cur.execute(
-                "ALTER TABLE notifications "
-                "ADD COLUMN is_read INTEGER DEFAULT 0"
-            )
+        # pending_withdrawals upgrades
+        if cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_withdrawals';").fetchone():
+            cols_w = {c[1] for c in cur.execute("PRAGMA table_info(pending_withdrawals)").fetchall()}
+            if "status" not in cols_w:
+                cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN status TEXT DEFAULT 'pending'")
+            if "processed_by" not in cols_w:
+                cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_by TEXT")
+            if "processed_at" not in cols_w:
+                cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_at TEXT")
 
-        if "created_at" not in cols_not:
-            cur.execute("ALTER TABLE notifications ADD COLUMN created_at TEXT")
+        # notifications upgrades
+        if cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='notifications';").fetchone():
+            cols_not = {c[1] for c in cur.execute("PRAGMA table_info(notifications)").fetchall()}
 
-        if "ref_type" not in cols_not:
-            cur.execute("ALTER TABLE notifications ADD COLUMN ref_type TEXT")
-        if "ref_id" not in cols_not:
-            cur.execute("ALTER TABLE notifications ADD COLUMN ref_id INTEGER")
+            if "body" not in cols_not:
+                cur.execute("ALTER TABLE notifications ADD COLUMN body TEXT")
+                if "message" in cols_not:
+                    try:
+                        cur.execute("UPDATE notifications SET body = message WHERE body IS NULL")
+                    except Exception:
+                        pass
 
-        # ✅ (NEW) telegram_link_codes table في SQLite
+            if "type" not in cols_not:
+                cur.execute("ALTER TABLE notifications ADD COLUMN type TEXT")
+            if "is_read" not in cols_not:
+                cur.execute("ALTER TABLE notifications ADD COLUMN is_read INTEGER DEFAULT 0")
+            if "created_at" not in cols_not:
+                cur.execute("ALTER TABLE notifications ADD COLUMN created_at TEXT")
+            if "ref_type" not in cols_not:
+                cur.execute("ALTER TABLE notifications ADD COLUMN ref_type TEXT")
+            if "ref_id" not in cols_not:
+                cur.execute("ALTER TABLE notifications ADD COLUMN ref_id INTEGER")
+
+        # telegram_link_codes (SQLite)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS telegram_link_codes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -727,6 +604,7 @@ def get_user(username):
         "transactions": transactions,
     }
 
+
 def get_user_by_email(email: str):
     """
     ترجع نفس dict المستخدم التي ترجعها get_user،
@@ -746,6 +624,7 @@ def get_user_by_email(email: str):
 
     username = row["username"] if isinstance(row, dict) else row[0]
     return get_user(username)
+
 
 def change_balance(user_id, currency, delta):
     db = get_db()
@@ -826,13 +705,9 @@ def count_unread_notifications(user_id: int) -> int:
         logging.warning("count_unread_notifications error: %s", e)
         return 0
 
-
 # ==============================
 # ✅ (NEW) Platform ↔ Telegram linking helpers
 # ==============================
-
-def _now_str():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def _generate_link_code(length=8):
     alphabet = string.ascii_uppercase + string.digits
@@ -1810,7 +1685,7 @@ def register():
         if get_user(username):
             flash("❌ اسم المستخدم موجود بالفعل", "error")
             return render_template("register.html")
-
+        
         # ✅ التأكد من أن البريد غير مستعمل
         db = get_db()
         existing_email = db.execute(
@@ -1822,7 +1697,7 @@ def register():
             return render_template("register.html")
 
         hashed_pw = generate_password_hash(password)
-
+        token = secrets.token_urlsafe(32)
         # ==============================
         # 1) إنشاء المستخدم فقط
         # ==============================
@@ -1851,31 +1726,32 @@ def register():
             )
             db.commit()
 
-            # إرسال إيميل التفعيل
-            link = send_verification_email(email, verify_token)
+            send_verification_email(email, verify_token)
 
-            # وضع التطوير (SMTP غير مفعّل)
-            if not SMTP_HOST or not SMTP_USERNAME or not SMTP_PASSWORD:
-                flash(
-                    f"✅ تم إنشاء الحساب. (وضع التطوير) رابط التفعيل: {link}",
-                    "info",
-                )
-            else:
-                flash("✅ تم إنشاء الحساب. يرجى فحص بريدك الإلكتروني لتفعيل الحساب.", "success")
+            flash(
+                "✅ تم إنشاء الحساب. يرجى فحص بريدك الإلكتروني لتفعيل الحساب.",
+                "success",
+            )
 
         except Exception as e:
-            # لا نُسقط التسجيل لو فشل الإيميل؛ فقط نسجل الخطأ
             logging.error("register error (verification email): %s", e)
             flash(
                 "✅ تم إنشاء الحساب، لكن تعذر إرسال بريد التفعيل حالياً. "
-                "حاول لاحقاً أو تواصل مع الدعم.",
+                "يرجى المحاولة لاحقاً أو التواصل مع الدعم.",
                 "info",
+            )
+
+        except Exception as e:
+            logging.exception("register error (verification email): %s", e)
+            flash(
+                "⚠️ تم إنشاء الحساب، لكن تعذر إرسال رسالة التفعيل حالياً. "
+                "يرجى المحاولة لاحقاً أو التواصل مع الدعم.",
+                "error",
             )
 
         return redirect(url_for("login"))
 
     return render_template("register.html")
-
 @app.route("/verify_email/<token>")
 def verify_email(token):
     db = get_db()
@@ -3076,4 +2952,4 @@ def transfer_to_bot_10():
 # تشغيل التطبيق
 # ==============================
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
