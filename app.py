@@ -88,12 +88,17 @@ def send_verification_email(to_email: str, token: str) -> str:
     <p><a href="{verify_url}">{verify_url}</a></p>
     """
 
-    resend.Emails.send({
-        "from": EMAIL_FROM,
-        "to": [to_email],
-        "subject": subject,
-        "html": html
-    })
+    try:
+        resend.Emails.send({
+            "from": EMAIL_FROM,
+            "to": [to_email],
+            "subject": subject,
+            "html": html
+        })
+    except Exception as e:
+        logging.exception("Resend send_verification_email failed: %s", e)
+        # مهم: نعيد الرابط على أي حال حتى لا نكسر التسجيل
+        return verify_url
 
     return verify_url
 # ==============================
