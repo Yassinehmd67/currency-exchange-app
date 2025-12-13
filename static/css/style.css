@@ -149,90 +149,67 @@ textarea {
 }
 
 /* ==============================
-   ✅ Topbar / Navbar (Professional)
-   - compact height
-   - chip buttons
-   - 2-column grid on mobile
+   ✅ TOPBAR (Only) — Mobile Layout
+   - 2 buttons per row
+   - smaller height
+   - DOES NOT affect page cards below
    ============================== */
 
 .topbar {
-  background: #0f172a;              /* نفس الأسود لكن أنيق */
-  color: #e5e7eb;
-  padding: 10px 12px;               /* يقلل ارتفاع الشريط */
+  /* لا نغيّر شكلها على الكمبيوتر إلا بشكل بسيط */
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
+  padding: 10px 14px;
 }
 
-/* اجعل الجزء الذي فيه الروابط مرن ويتلف */
-.topbar > div:last-child {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;                         /* تباعد طبيعي */
-  justify-content: flex-end;
-}
-
-/* "مرحباً admin" */
-.topbar > div:first-child {
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-/* شكل أزرار الشريط */
+/* الروابط داخل التوب بار فقط */
 .topbar a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 10px;                /* أصغر */
-  border-radius: 999px;             /* pill */
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
-  color: #e5e7eb;
-  font-size: 14px;
-  line-height: 1;
+  padding: 8px 10px;
+  border-radius: 10px;
   white-space: nowrap;
   text-decoration: none;
-  transition: transform .12s ease, background .12s ease, border-color .12s ease;
 }
 
-.topbar a:hover {
-  background: rgba(255, 255, 255, 0.10);
-  border-color: rgba(255, 255, 255, 0.22);
-  transform: translateY(-1px);
-  text-decoration: none;
-}
-
-/* تحسين بادج الإشعارات (لو عندك span inline style لن يخرب) */
-.topbar a span {
-  transform: translateY(-1px);
-}
-
-/* ✅ الهاتف: 2 أزرار في السطر + الشريط يبقى صغير */
+/* الهاتف: خلي الأزرار شبكة 2 في السطر */
 @media (max-width: 768px) {
   .topbar {
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    padding: 10px 10px;             /* لا تكبير */
+    justify-content: center;
+    padding: 10px 12px;
+    gap: 8px;
   }
 
+  /* أول div (مرحبا...) يأخذ سطر كامل */
   .topbar > div:first-child {
+    width: 100%;
+    text-align: center;
     margin-bottom: 6px;
+    font-weight: 600;
   }
 
-  .topbar > div:last-child {
+  /* ثاني div اللي فيه الروابط: شبكة */
+  .topbar > div:nth-child(2) {
     width: 100%;
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr)); /* 2 في السطر */
+    grid-template-columns: 1fr 1fr; /* زرين في كل سطر */
     gap: 8px;
-    justify-content: center;
   }
 
-  .topbar a {
-    justify-content: center;
+  .topbar > div:nth-child(2) a {
     width: 100%;
-    padding: 9px 10px;
+    justify-content: center;
+    padding: 10px 8px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.06);
+    border-radius: 12px;
     font-size: 14px;
+  }
+
+  .topbar > div:nth-child(2) a:hover {
+    text-decoration: none;
+    background: rgba(255,255,255,0.10);
   }
 }
