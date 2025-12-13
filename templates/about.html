@@ -1,76 +1,13 @@
 <!DOCTYPE html>
-<html lang="{{ session.get('lang','ar') }}">
+<html lang="{{ session.get('lang','ar') }}" dir="{{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }}">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   <title>{{ t('about_app') }}</title>
-  <style>
-    body{
-      font-family:system-ui,"Cairo",sans-serif;
-      margin:0;
-      background:#f7f7f9;
-      direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};
-    }
-    header{
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      padding:12px 16px;
-      background:#111;
-      color:#fff;
-    }
-    header a{
-      color:#9ad;
-      text-decoration:none;
-      margin-inline:8px;
-    }
-    main{
-      max-width:900px;
-      margin:24px auto;
-      padding:0 12px 32px;
-    }
-    .card{
-      background:#fff;
-      border:1px solid #e8e8ef;
-      border-radius:14px;
-      padding:20px 18px;
-      box-shadow:0 2px 10px rgba(0,0,0,.03);
-      margin-bottom:18px;
-    }
-    h1,h2,h3{
-      margin:6px 0 12px;
-      color:#111827;
-    }
-    p{
-      margin:6px 0 10px;
-      line-height:1.8;
-      color:#374151;
-    }
-    ul{
-      margin:6px 0 6px;
-      padding-inline-start:22px;
-    }
-    li{
-      margin:4px 0;
-      line-height:1.7;
-      color:#374151;
-    }
-    .section-title{
-      border-right:4px solid #2563eb;
-      padding-right:8px;
-      margin-bottom:8px;
-    }
-    .muted{
-      opacity:.9;
-    }
-    .tagline{
-      font-size:14px;
-      color:#6b7280;
-      margin-bottom:10px;
-    }
-  </style>
 </head>
+
+<!-- ✅ فقط أضفنا class هنا ليستفيد من theme العام إن أحببت (بدون تغيير أي شيء آخر) -->
 <body>
 <header>
   <div>

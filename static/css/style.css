@@ -2,302 +2,504 @@
 @import url('https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/6.7.0/css/flag-icons.min.css');
 
 /* ==============================
-   Global Base Styles (Light)
-   Works alongside per-page CSS
+   ✅ Design Tokens (CSS Variables)
    ============================== */
+:root{
+  --bg: #f4f6f8;
+  --text: #111827;
+  --muted: #6b7280;
 
-/* Reset + box sizing */
+  --card: #ffffff;
+  --border: rgba(15, 23, 42, 0.10);
+  --shadow: 0 6px 18px rgba(0,0,0,.08);
+
+  --primary: #2563eb;
+  --primary-2: #1d4ed8;
+
+  --danger: #dc2626;
+  --success: #16a34a;
+  --warn: #f59e0b;
+
+  --topbar-bg: #111827;
+  --topbar-link: #93c5fd;
+  --topbar-link-hover: #bfdbfe;
+
+  --radius: 14px;
+  --radius-sm: 10px;
+  --container: 1000px;
+}
+
+/* Dark theme (للصفحات الداكنة مثل link_telegram + admin_bot_balance) */
+body.theme-dark{
+  --bg: #0b1220;
+  --text: #e5e7eb;
+  --muted: rgba(229,231,235,.82);
+
+  --card: rgba(255,255,255,0.06);
+  --border: rgba(255,255,255,0.14);
+  --shadow: 0 12px 30px rgba(0,0,0,0.25);
+
+  --topbar-bg: rgba(0,0,0,0.55);
+  --topbar-link: #9ad;
+  --topbar-link-hover: #c7ddff;
+
+  --primary: #93c5fd;
+  --primary-2: #60a5fa;
+}
+
+/* ==============================
+   Reset + Base
+   ============================== */
 *,
 *::before,
-*::after {
-  box-sizing: border-box;
+*::after{ box-sizing:border-box; }
+
+html{
+  -webkit-text-size-adjust:100%;
+  text-size-adjust:100%;
 }
 
-html {
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
-}
-
-body {
-  font-family: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background-color: #f4f6f8;
-  color: #111827;
-  margin: 0;
-  padding: 0;
-  line-height: 1.5;
+body{
+  font-family:'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  margin:0;
+  padding:0;
+  line-height:1.5;
 }
 
 /* روابط */
-a {
-  color: inherit;
-  text-decoration: none;
-}
-a:hover {
-  text-decoration: underline;
-}
+a{ color:inherit; text-decoration:none; }
+a:hover{ text-decoration:underline; }
 
-/* صور/فيديو: لا تكسر التصميم في الهاتف */
-img,
-video,
-canvas,
-svg {
-  max-width: 100%;
-  height: auto;
-}
+/* لا تكسر التصميم في الهاتف */
+img, video, canvas, svg{ max-width:100%; height:auto; }
 
-/* فورم عام (خفيف ومحايد) */
-input,
-select,
-textarea,
-button {
-  font: inherit;
-}
-
-input,
-select,
-textarea {
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  background: #ffffff;
+/* عناصر الفورم */
+input, select, textarea, button{ font:inherit; }
+input, select, textarea{
+  width:100%;
+  padding:10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(0,0,0,0.12);
+  background: #fff;
   color: #111827;
-  outline: none;
+  outline:none;
+}
+body.theme-dark input,
+body.theme-dark select,
+body.theme-dark textarea{
+  background: rgba(0,0,0,0.22);
+  border-color: rgba(255,255,255,0.18);
+  color: var(--text);
 }
 
-input:focus,
-select:focus,
-textarea:focus {
-  border-color: rgba(59, 130, 246, 0.6);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+input:focus, select:focus, textarea:focus{
+  border-color: rgba(59,130,246,0.6);
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
 }
 
-button {
-  cursor: pointer;
-  border: 0;
-  border-radius: 10px;
-  padding: 10px 14px;
-  background: #2563eb;
-  color: #ffffff;
-  font-weight: 600;
+/* أزرار */
+button, .btn{
+  cursor:pointer;
+  border:0;
+  border-radius: var(--radius-sm);
+  padding:10px 14px;
+  background: var(--primary);
+  color:#fff;
+  font-weight:700;
 }
-
-button:hover {
-  filter: brightness(0.98);
+button:hover, .btn:hover{ filter:brightness(0.98); }
+.btn-secondary{
+  background: rgba(17,24,39,0.07);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
+body.theme-dark .btn-secondary{
+  background: rgba(255,255,255,0.12);
+  border-color: rgba(255,255,255,0.16);
+  color: var(--text);
+}
+.btn-danger{ background:#fb7185; color:#0b1220; }
+.btn-pill{ border-radius:999px; }
 
 /* Flash messages */
-.flash {
-  text-align: center;
+.flash{
+  text-align:center;
   margin: 14px auto;
-  padding: 10px 12px;
+  padding:10px 12px;
   width: min(900px, 92vw);
   border-radius: 12px;
-  font-weight: bold;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.85);
+  font-weight:700;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.85);
+  color: var(--text);
 }
-
-.flash.error {
-  color: #e74c3c;
-  border-color: rgba(231, 76, 60, 0.25);
-  background: rgba(231, 76, 60, 0.08);
+body.theme-dark .flash{
+  background: rgba(0,0,0,0.22);
 }
-
-.flash.success {
-  color: #27ae60;
-  border-color: rgba(39, 174, 96, 0.25);
-  background: rgba(39, 174, 96, 0.08);
+.flash.error{
+  color:#b91c1c;
+  border-color: rgba(231,76,60,0.25);
+  background: rgba(231,76,60,0.08);
 }
-
-.flash.info {
-  color: #2563eb;
-  border-color: rgba(37, 99, 235, 0.25);
-  background: rgba(37, 99, 235, 0.08);
+.flash.success{
+  color:#166534;
+  border-color: rgba(39,174,96,0.25);
+  background: rgba(39,174,96,0.08);
 }
-
-/* لمسة مهمة للهاتف: أهداف لمس أفضل */
-a,
-button,
-input,
-select,
-textarea {
-  touch-action: manipulation;
-}
-
-/* جداول على الهاتف: خليها scroll بدل ما تخرب الصفحة */
-@media (max-width: 768px) {
-  body {
-    font-size: 15px;
-  }
-
-  table {
-    display: block;
-    width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-}
-
-/* احترام إعداد “تقليل الحركة” */
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation: none !important;
-    transition: none !important;
-    scroll-behavior: auto !important;
-  }
+.flash.info{
+  color:#1e40af;
+  border-color: rgba(37,99,235,0.25);
+  background: rgba(37,99,235,0.08);
 }
 
 /* ==============================
-   ✅ TOPBAR (Only) — Mobile Layout
-   - 2 buttons per row
-   - smaller height
-   - DOES NOT affect page cards below
+   Layout Helpers
    ============================== */
-
-.topbar {
-  /* لا نغيّر شكلها على الكمبيوتر إلا بشكل بسيط */
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+.container{
+  max-width: var(--container);
+  margin: 24px auto;
+  padding: 0 16px 32px;
 }
 
-/* الروابط داخل التوب بار فقط */
-.topbar a {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  white-space: nowrap;
-  text-decoration: none;
+main{
+  max-width: var(--container);
+  margin: 24px auto;
+  padding: 0 12px 32px;
 }
 
-/* الهاتف: خلي الأزرار شبكة 2 في السطر */
-@media (max-width: 768px) {
-  .topbar {
-    justify-content: center;
-    padding: 10px 12px;
-    gap: 8px;
-  }
-
-  /* أول div (مرحبا...) يأخذ سطر كامل */
-  .topbar > div:first-child {
-    width: 100%;
-    text-align: center;
-    margin-bottom: 6px;
-    font-weight: 600;
-  }
-
-  /* ثاني div اللي فيه الروابط: شبكة */
-  .topbar > div:nth-child(2) {
-    width: 100%;
-    display: grid;
-    grid-template-columns: 1fr 1fr; /* زرين في كل سطر */
-    gap: 8px;
-  }
-
-  .topbar > div:nth-child(2) a {
-    width: 100%;
-    justify-content: center;
-    padding: 10px 8px;
-    border: 1px solid rgba(255,255,255,0.12);
-    background: rgba(255,255,255,0.06);
-    border-radius: 12px;
-    font-size: 14px;
-  }
-
-  .topbar > div:nth-child(2) a:hover {
-    text-decoration: none;
-    background: rgba(255,255,255,0.10);
-  }
+.card{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.03);
 }
 
+h1,h2,h3{
+  color: var(--text);
+  margin: 6px 0 12px;
+}
+
+p, li{
+  color: color-mix(in srgb, var(--text) 82%, transparent);
+}
+
+#convert_result{ white-space: pre-line; }
 /* ==============================
-   ✅ TOPBAR FIX (strong override)
-   - full width at top
-   - 2 buttons per row on mobile
+   ✅ Topbar / Header (Global)
+   هدفنا: شريط صغير + أزرار مرتبة في الهاتف (زرّين في السطر)
    ============================== */
-
-.topbar{
-  position: sticky !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-
-  width: 100% !important;
-  max-width: 100% !important;
-
-  z-index: 9999;
-  background: #0f172a; /* نفس الأسود */
+header, .topbar{
+  background: var(--topbar-bg);
   color: #fff;
-
-  display: flex !important;
-  align-items: center;
+  padding: 10px 12px;
+  display:flex;
+  align-items:center;
   justify-content: space-between;
   gap: 10px;
-
-  padding: 10px 12px;
 }
 
-/* خلي الديفين داخل التوب بار واضحين */
-.topbar > div{
-  display: flex;
-  align-items: center;
-  gap: 10px;
+/* الروابط داخل الشريط */
+header a, .topbar a{
+  color: var(--topbar-link);
+  text-decoration:none;
 }
 
-/* روابط التوب بار فقط */
-.topbar a{
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+/* مجموعة الروابط: خليه flex بس ما يوسّع كثير */
+header > div:last-child,
+.topbar > div:last-child{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
   gap: 6px;
+  justify-content:flex-end;
+}
 
-  padding: 8px 10px;
+/* شكل “زر رابط” داخل الشريط */
+header > div:last-child a,
+.topbar > div:last-child a{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap: 6px;
+  padding: 7px 10px;
   border-radius: 10px;
-
-  border: 1px solid rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.14);
   background: rgba(255,255,255,0.06);
-
   white-space: nowrap;
-  text-decoration: none;
+  line-height: 1.1;
 }
-
-.topbar a:hover{
-  text-decoration: none;
+header > div:last-child a:hover,
+.topbar > div:last-child a:hover{
   background: rgba(255,255,255,0.10);
+  text-decoration:none;
+  color: var(--topbar-link-hover);
 }
 
-/* الهاتف: مرحبا بسطر لوحده + الأزرار 2/سطر */
-@media (max-width: 768px){
-  .topbar{
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: flex-start;
-    padding: 10px 12px;
+/* على الهاتف: زرّين في كل سطر (Grid) + ارتفاع صغير */
+@media (max-width: 640px){
+  header, .topbar{
+    padding: 8px 10px;
   }
 
-  /* "مرحبا" */
+  /* نخلي عمود الترحيب لوحده فوق */
+  header > div:first-child,
   .topbar > div:first-child{
-    width: 100%;
-    justify-content: center;
-    margin: 0;
-    font-weight: 600;
+    width:100%;
+    font-size: 13px;
+    opacity: .95;
   }
 
-  /* الروابط */
-  .topbar > div:nth-child(2){
-    width: 100%;
-    display: grid !important;
-    grid-template-columns: 1fr 1fr; /* زرين في كل سطر */
+  /* الروابط Grid بعمودين */
+  header > div:last-child,
+  .topbar > div:last-child{
+    width:100%;
+    display:grid;
+    grid-template-columns: 1fr 1fr;
     gap: 8px;
+    justify-content: stretch;
   }
 
-  .topbar > div:nth-child(2) a{
-    width: 100%;
-    padding: 10px 8px;
-    font-size: 14px;
+  header > div:last-child a,
+  .topbar > div:last-child a{
+    width:100%;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+}
+
+/* ==============================
+   Tables
+   ============================== */
+table{ width:100%; border-collapse:collapse; }
+th, td{
+  padding: 10px;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+  text-align:center;
+}
+th{ background: rgba(0,0,0,0.03); }
+
+body.theme-dark th,
+body.theme-dark td{
+  border-bottom-color: rgba(255,255,255,0.12);
+}
+body.theme-dark th{ background: rgba(255,255,255,0.06); }
+
+@media (max-width: 768px){
+  table{
+    display:block;
+    width:100%;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+  }
+}
+
+/* ==============================
+   Badges / Pills
+   ============================== */
+.badge, .pill, .status-badge{
+  display:inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: rgba(0,0,0,0.08);
+  color: var(--text);
+}
+body.theme-dark .badge,
+body.theme-dark .pill,
+body.theme-dark .status-badge{
+  background: rgba(255,255,255,0.12);
+  color: var(--text);
+}
+
+.st-pending{ background:#fef3c7; color:#92400e; }
+.st-processing{ background:#dbeafe; color:#1e40af; }
+.st-approved{ background:#dcfce7; color:#166534; }
+.st-rejected{ background:#fee2e2; color:#b91c1c; }
+
+/* ==============================
+   Pager (transactions)
+   ============================== */
+.pager{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-top:14px;
+  font-size:14px;
+  gap: 10px;
+  flex-wrap:wrap;
+}
+.pager a{
+  color: #0b63f3;
+  text-decoration:none;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(37,99,235,0.10);
+  border: 1px solid rgba(37,99,235,0.15);
+}
+.pager a:hover{ background: rgba(37,99,235,0.14); }
+.page-label{ opacity:.8; }
+
+/* ==============================
+   ✅ Auth Pages (login/register/forgot/reset)
+   نحافظ على نفس شكلهم، مع ريسبونسف محترم
+   ============================== */
+.wrapper{
+  position:relative;
+  width:100%;
+  max-width:440px;
+  padding:24px;
+}
+
+.box{
+  background: var(--card);
+  border: 1px solid var(--border);
+  padding: 26px 24px 22px;
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  text-align:center;
+  width: 360px;
+  max-width: 92vw;
+}
+
+.field{ margin-bottom: 12px; }
+.field label{
+  display:block;
+  margin-bottom:4px;
+  font-size:13px;
+  color: color-mix(in srgb, var(--text) 65%, transparent);
+}
+.field input, .field select{
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.12);
+}
+
+.note{
+  margin-top:8px;
+  font-size:12px;
+  color: var(--muted);
+  line-height:1.6;
+}
+
+.link{
+  display:block;
+  margin-top:12px;
+  font-size:13px;
+  text-align:center;
+  color: color-mix(in srgb, var(--primary) 85%, #0000);
+}
+
+.lang-switch{
+  position:fixed;
+  top:16px;
+  z-index:10;
+}
+.lang-switch.lang-en{ left:16px; right:auto; }
+.lang-switch.lang-ar{ right:16px; left:auto; }
+.lang-switch a{
+  color: color-mix(in srgb, var(--primary) 85%, #0000);
+  font-weight:700;
+  text-decoration:none;
+  font-size:13px;
+}
+/* Position language switch based on current language */
+.lang-switch.lang-ar { right: 16px; left: auto; }
+.lang-switch.lang-en { left: 16px; right: auto; }
+/* phone row */
+.phone-row{ display:flex; gap:6px; }
+.phone-row .country-select{ flex:0 0 42%; }
+.phone-row .phone-input{ flex:1; }
+
+/* password meter */
+.pw-helper{ font-size:11px; color: var(--muted); margin-top:3px; line-height:1.5; }
+.pw-meter{ margin-top:6px; height:6px; border-radius:999px; background:#e5e7eb; overflow:hidden; }
+.pw-meter-bar{ height:100%; width:0%; transition:width .25s ease, background-color .25s ease; }
+.pw-weak{ background:#ef4444; }
+.pw-medium{ background:#f97316; }
+.pw-strong{ background:#22c55e; }
+.pw-label{ margin-top:4px; font-size:12px; color: color-mix(in srgb, var(--text) 70%, transparent); }
+
+/* forgot link */
+.forgot{ margin-top:-8px; margin-bottom:10px; }
+.forgot a{ font-size:13px; color: color-mix(in srgb, var(--primary) 85%, #0000); }
+
+/* auth page full center */
+body.auth-page{
+  min-height:100vh;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  padding:24px;
+}
+
+@media (max-width: 520px){
+  body.auth-page{ align-items:flex-start; padding:16px; }
+  .box{ width:100%; padding:20px 16px; margin-top:18px; border-radius:14px; }
+  .wrapper{ padding:16px; max-width:520px; }
+
+  .phone-row{ flex-direction:column; }
+  .phone-row .country-select{ flex:1 1 auto; }
+}
+
+@media (max-width: 360px){
+  body.auth-page{ padding:12px; }
+  .box{ padding:18px 14px; }
+}
+
+/* ==============================
+   Floating Telegram Button (support/link_telegram)
+   ============================== */
+.floating-telegram{
+  position:fixed;
+  bottom:20px;
+  left:20px;
+  background:#0088cc;
+  width:58px;
+  height:58px;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  border-radius:50%;
+  box-shadow:0 4px 12px rgba(0,0,0,.25);
+  z-index:999;
+  cursor:pointer;
+  transition:.2s ease;
+}
+.floating-telegram:hover{ background:#0099dd; transform:scale(1.06); }
+.floating-telegram img{ width:34px; height:34px; }
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce){
+  *{ animation:none !important; transition:none !important; scroll-behavior:auto !important; }
+}
+
+/* ==============================
+   Admin Overview: filters layout fix (mobile)
+   ============================== */
+
+/* افتراضي: 5 أعمدة في الشاشات الواسعة */
+.filters{
+  display:grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  align-items:end;
+}
+
+/* تابلت: 3 أعمدة */
+@media (max-width: 900px){
+  .filters{
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* هاتف: عمودين + زر التطبيق يأخذ عرض سطر كامل */
+@media (max-width: 640px){
+  .filters{
+    grid-template-columns: 1fr 1fr;
+  }
+  .filters > div:last-child{
+    grid-column: 1 / -1;
   }
 }

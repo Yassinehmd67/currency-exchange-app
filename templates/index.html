@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="{{ session.get('lang', 'ar') }}">
+<html lang="{{ session.get('lang','ar') }}" dir="{{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -15,214 +15,6 @@
     <!-- أعلام العملات -->
     <link rel="stylesheet"
           href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/6.7.0/css/flag-icons.min.css">
-
-    <style>
-        body {
-            font-family: 'Cairo', sans-serif;
-            background-color: #f4f6f8;
-            margin: 0;
-            padding: 0;
-            direction: {{ 'rtl' if session.get('lang', 'ar') == 'ar' else 'ltr' }};
-        }
-
-        .topbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 20px;
-            background: #111827;
-            color: #fff;
-            font-size: 14px;
-        }
-
-        .topbar a {
-            color: #93c5fd;
-            text-decoration: none;
-            margin-inline: 8px;
-        }
-
-        .topbar a:hover {
-            text-decoration: underline;
-        }
-
-        .container {
-            max-width: 1000px;
-            margin: 24px auto;
-            padding: 0 16px 32px;
-        }
-
-        .card {
-            background: #ffffff;
-            border-radius: 14px;
-            box-shadow: 0 2px 12px rgba(15, 23, 42, 0.08);
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-
-        h2, h3 {
-            margin-top: 0;
-            color: #111827;
-            text-align: center;
-        }
-
-        .flash {
-            text-align: center;
-            margin-bottom: 10px;
-            font-weight: bold;
-        }
-
-        .flash.error {
-            color: #e11d48;
-        }
-
-        .flash.success {
-            color: #16a34a;
-        }
-
-        /* الأرصدة */
-        .balance-grid {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 12px;
-            margin-top: 12px;
-        }
-
-        .balance-card {
-            min-width: 120px;
-            padding: 10px 12px;
-            border-radius: 10px;
-            background: #f3f4f6;
-            text-align: center;
-            font-size: 14px;
-        }
-
-        .balance-card strong {
-            display: block;
-            margin-bottom: 4px;
-        }
-
-        /* النماذج */
-        form {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            max-width: 360px;
-            margin: 0 auto;
-        }
-
-        input, select, textarea {
-            padding: 10px;
-            border-radius: 8px;
-            border: 1px solid #d1d5db;
-            font-size: 14px;
-            width: 100%;
-            box-sizing: border-box;
-        }
-
-        textarea {
-            resize: vertical;
-            min-height: 70px;
-        }
-
-        button {
-            padding: 10px;
-            border-radius: 8px;
-            border: none;
-            cursor: pointer;
-            font-size: 15px;
-            font-weight: 600;
-            background: #2563eb;
-            color: #fff;
-        }
-
-        button:hover {
-            background: #1d4ed8;
-        }
-
-        .note {
-            font-size: 13px;
-            color: #6b7280;
-            text-align: center;
-            margin-top: 6px;
-            white-space: pre-line;
-        }
-
-        .section-title {
-            margin-bottom: 8px;
-            font-size: 18px;
-        }
-
-        .two-cols {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 16px;
-        }
-
-        @media (min-width: 800px) {
-            .two-cols {
-                grid-template-columns: 1fr 1fr;
-            }
-        }
-
-        .tx-toggle {
-            cursor: pointer;
-            color: #2563eb;
-            text-align: center;
-            margin-top: 8px;
-        }
-
-        .tx-list {
-            list-style: none;
-            padding: 0;
-            margin: 12px 0 0;
-        }
-
-        .tx-item {
-            background: #f9fafb;
-            border-radius: 8px;
-            padding: 8px 10px;
-            font-size: 13px;
-            margin-bottom: 6px;
-        }
-
-        .tx-item .ts {
-            color: #6b7280;
-            font-size: 12px;
-        }
-
-        .badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 999px;
-            font-size: 11px;
-            margin-bottom: 4px;
-            background: #e5e7eb;
-            color: #111827;
-        }
-
-        /* شريط صفحات سجل العمليات في الداشبورد */
-        .tx-pager {
-            display: none; /* تظهر فقط عند وجود أكثر من 5 معاملات */
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 10px;
-            font-size: 13px;
-        }
-        .tx-pager button {
-            padding: 6px 10px;
-            font-size: 13px;
-            background: #e5e7eb;
-            color: #111827;
-        }
-        .tx-pager button:disabled {
-            opacity: 0.5;
-            cursor: default;
-        }
-        .tx-page-label {
-            opacity: 0.8;
-        }
-    </style>
 </head>
 <body>
 
@@ -249,7 +41,7 @@
         <a href="{{ url_for('notifications') }}" class="notif-link">
             🔔 {% if session.get('lang') == 'en' %}Notifications{% else %}الإشعارات{% endif %}
             {% if unread_notifications and unread_notifications > 0 %}
-                <span class="notif-badge">{{ unread_notifications }}</span>
+                <span class="badge notif-badge">{{ unread_notifications }}</span>
             {% endif %}
         </a>
 
@@ -261,7 +53,8 @@
             🔗 {% if session.get('lang') == 'en' %}Link Telegram{% else %}ربط تيليجرام{% endif %}
         </a>
     </div>
-    
+</div>
+
 <div class="container">
     <!-- رسائل فلاش -->
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -302,98 +95,98 @@
     <!-- شبك Binance + التحويل + السحب -->
     <div class="two-cols">
 
-<!-- شحن عبر Binance UID -->
-    <!-- شحن عبر Binance UID -->
-<div class="card">
-    <h3 class="section-title">
-        {% if session.get('lang') == 'en' %}
-            💳 Top-up via Binance Pay (UID)
-        {% else %}
-            💳 شحن الرصيد عبر Binance Pay (UID)
-        {% endif %}
-    </h3>
+        <!-- شحن عبر Binance UID -->
+        <div class="card">
+            <h3 class="section-title">
+                {% if session.get('lang') == 'en' %}
+                    💳 Top-up via Binance Pay (UID)
+                {% else %}
+                    💳 شحن الرصيد عبر Binance Pay (UID)
+                {% endif %}
+            </h3>
 
-    <div class="note">
-        {% if session.get('lang') == 'en' %}
+            <div class="note">
+                {% if session.get('lang') == 'en' %}
 This is our Binance Pay UID to receive USDT:
-        {% else %}
+                {% else %}
 هذا هو UID الخاص بنا في Binance Pay لاستقبال USDT:
-        {% endif %}
-        <br><strong>{{ binance_uid }}</strong>
-    </div>
+                {% endif %}
+                <br><strong>{{ binance_uid }}</strong>
+            </div>
 
-    <div class="note">
-        {% if session.get('lang') == 'en' %}
+            <div class="note">
+                {% if session.get('lang') == 'en' %}
 1️⃣ Open Binance ➝ Binance Pay  
 2️⃣ Send USDT to the UID above  
 3️⃣ Paste the TxID / note here and choose the currency to credit in your account.
-        {% else %}
+                {% else %}
 ١️⃣ افتح تطبيق باينانس ➝ Binance Pay  
 ٢️⃣ أرسل USDT إلى الـ UID بالأعلى  
 ٣️⃣ الصق رقم العملية (TxID) أو ملاحظة التحويل واختر العملة التي تريد شحنها في حسابك.
-        {% endif %}
-    </div>
+                {% endif %}
+            </div>
 
-    {% if binance_auto_100_url %}
-      <div class="note">
-        {% if session.get('lang') == 'en' %}
+            {% if binance_auto_100_url %}
+              <div class="note">
+                {% if session.get('lang') == 'en' %}
 You can also use a quick automatic payment link (fixed 100&nbsp;USDT):
-        {% else %}
+                {% else %}
 يمكنك أيضاً استخدام رابط شحن سريع أوتوماتيكي بقيمة ثابتة 100&nbsp;USDT:
-        {% endif %}
-      </div>
+                {% endif %}
+              </div>
 
-      <div style="text-align:center; margin:10px 0 16px;">
-        <a href="{{ binance_auto_100_url }}" target="_blank"
-           style="display:inline-block;padding:10px 18px;border-radius:999px;
-                  background:#10b981;color:#fff;text-decoration:none;
-                  font-weight:600;font-size:14px;">
-          {% if session.get('lang') == 'en' %}
-            ⚡ Pay 100 USDT automatically
-          {% else %}
-            ⚡ شحن فوري 100 USDT
-          {% endif %}
-        </a>
-      </div>
-    {% endif %}
-
-    <form action="{{ url_for('binance_deposit_proof') }}" method="POST">
-        <input type="number" step="0.01" min="0"
-               name="amount"
-               placeholder="{% if session.get('lang') == 'en' %}Amount to credit{% else %}المبلغ المراد إضافته في حسابك{% endif %}"
-               required>
-
-        <select name="currency" required>
-            {% for c in currencies %}
-                <option value="{{ c }}">{{ c }}</option>
-            {% endfor %}
-        </select>
-
-        <textarea name="txid" required
-                  placeholder="{% if session.get('lang') == 'en' %}
-TxID / proof (e.g. Binance Pay transaction ID)
+              <div style="text-align:center; margin:10px 0 16px;">
+                <a href="{{ binance_auto_100_url }}" target="_blank"
+                   style="display:inline-block;padding:10px 18px;border-radius:999px;
+                          background:#10b981;color:#fff;text-decoration:none;
+                          font-weight:600;font-size:14px;">
+                  {% if session.get('lang') == 'en' %}
+                    ⚡ Pay 100 USDT automatically
                   {% else %}
-رقم العملية (TxID) أو وصف مختصر للتحويل كما يظهر في Binance Pay
-                  {% endif %}"></textarea>
-
-        <button type="submit">
-            {% if session.get('lang') == 'en' %}
-                Send Top-up Proof
-            {% else %}
-                إرسال إثبات الشحن
+                    ⚡ شحن فوري 100 USDT
+                  {% endif %}
+                </a>
+              </div>
             {% endif %}
-        </button>
-    </form>
 
-    <div class="note">
-        {% if session.get('lang') == 'en' %}
+            <form action="{{ url_for('binance_deposit_proof') }}" method="POST">
+                <input type="number" step="0.01" min="0"
+                       name="amount"
+                       placeholder="{% if session.get('lang') == 'en' %}Amount to credit{% else %}المبلغ المراد إضافته في حسابك{% endif %}"
+                       required>
+
+                <select name="currency" required>
+                    {% for c in currencies %}
+                        <option value="{{ c }}">{{ c }}</option>
+                    {% endfor %}
+                </select>
+
+                <textarea name="txid" required
+                          placeholder="{% if session.get('lang') == 'en' %}
+TxID / proof (e.g. Binance Pay transaction ID)
+                          {% else %}
+رقم العملية (TxID) أو وصف مختصر للتحويل كما يظهر في Binance Pay
+                          {% endif %}"></textarea>
+
+                <button type="submit">
+                    {% if session.get('lang') == 'en' %}
+                        Send Top-up Proof
+                    {% else %}
+                        إرسال إثبات الشحن
+                    {% endif %}
+                </button>
+            </form>
+
+            <div class="note">
+                {% if session.get('lang') == 'en' %}
 Top-up will be reviewed manually, then the balance will be added to your account.
-        {% else %}
+                {% else %}
 سيتم مراجعة الشحن يدويًا، ثم إضافة الرصيد إلى حسابك بعد التأكد من التحويل.
-        {% endif %}
-    </div>
-</div>
-<!-- طلب السحب -->
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- طلب السحب -->
         <div class="card">
             <h3 class="section-title">
                 {% if session.get('lang') == 'en' %}
@@ -580,7 +373,6 @@ Your balance will be locked immediately and the withdrawal will be processed man
             pager.style.display = 'none';
         }
 
-        // تحديث النص حسب اللغة
         const isEn = "{{ session.get('lang','ar') }}" === "en";
         if (isEn) {
             label.textContent = "Page " + txPage;
@@ -665,7 +457,6 @@ Your balance will be locked immediately and the withdrawal will be processed man
                     msgConverted + ' ' + data.converted_amount + ' ' + to +
                     '\n' + msgRate + ' 1 ' + from + ' = ' + data.rate + ' ' + to;
 
-                // تحديث الأرصدة في الواجهة فورًا بدون إعادة تحميل الصفحة
                 if (data.balances) {
                     Object.entries(data.balances).forEach(([cur, val]) => {
                         const el = document.querySelector(

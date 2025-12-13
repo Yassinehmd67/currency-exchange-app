@@ -1,121 +1,10 @@
 <!DOCTYPE html>
-<html lang="{{ session.get('lang','ar') }}">
+<html lang="{{ session.get('lang','ar') }}" dir="{{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   <title>{{ t('withdrawals') }}</title>
-
-  <style>
-    body {
-      font-family: 'Cairo', system-ui, sans-serif;
-      direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};
-      background-color: #f5f5f5;
-      margin:0;
-      padding:20px;
-    }
-
-    .topbar {
-      display:flex;
-      gap:12px;
-      align-items:center;
-      flex-wrap:wrap;
-      margin-bottom:16px;
-    }
-
-    .topbar a {
-      color:#3498db;
-      text-decoration:none;
-      font-size:14px;
-    }
-
-    .topbar a:hover {
-      text-decoration:underline;
-    }
-
-    .admin-container {
-      max-width: 900px;
-      margin: 0 auto;
-      background: white;
-      padding: 24px;
-      border-radius: 10px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    }
-
-    h1 {
-      text-align: center;
-      margin-bottom: 20px;
-      color: #2c3e50;
-      font-size:22px;
-    }
-
-    .withdrawal-item {
-      padding: 12px;
-      margin-bottom: 12px;
-      background: #f9f9f9;
-      border-radius: 8px;
-      border: 1px solid #ddd;
-      font-size:14px;
-    }
-
-    .withdrawal-item form {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .info-line {
-      flex: 1 1 auto;
-    }
-
-    .info-line span {
-      display:inline-block;
-      margin-inline-end:6px;
-    }
-
-    .withdrawal-item button {
-      padding: 8px 16px;
-      background-color: #16a34a;
-      border: none;
-      color: white;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size:13px;
-      font-weight:600;
-      white-space:nowrap;
-    }
-
-    .withdrawal-item button:hover {
-      background-color: #15803d;
-    }
-
-    .flash {
-      text-align: center;
-      margin-bottom: 10px;
-      font-weight:bold;
-      font-size:14px;
-    }
-
-    .flash.error { color:#e11d48; }
-    .flash.success { color:#16a34a; }
-
-    .empty {
-      text-align:center;
-      color:#6b7280;
-      margin-top:10px;
-    }
-
-    .badge-status {
-      display:inline-block;
-      padding:2px 8px;
-      border-radius:999px;
-      font-size:11px;
-      background:#e5e7eb;
-      margin-inline-start:6px;
-    }
-  </style>
 </head>
 <body>
 
@@ -129,8 +18,10 @@
     <a href="{{ url_for('logout') }}">🔓 {{ t('logout') }}</a>
   </div>
 
-  <div class="admin-container">
-    <h1>📤 {{ t('withdrawals') }}</h1>
+  <div class="container">
+    <div class="card">
+      <h1 style="text-align:center;margin:0;">📤 {{ t('withdrawals') }}</h1>
+    </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -141,42 +32,49 @@
     {% endwith %}
 
     {% for w in withdrawals %}
-      <div class="withdrawal-item">
+      <div class="card">
         <form action="{{ url_for('admin_withdrawals') }}" method="POST">
           {# نفترض أن كل سطر سحب لديه id أساسي في DB #}
           <input type="hidden" name="withdrawal_id" value="{{ w.id }}">
 
-          <div class="info-line">
-            <span>👤 {{ t('user') }}: <strong>{{ w.username }}</strong></span> |
-            <span>💰 {{ t('amount') }}: <strong>{{ w.amount }} {{ w.currency }}</strong></span>
+          <div style="font-size:14px;line-height:1.8;word-break:break-word;">
+            <span>👤 {{ t('user') }}: <strong>{{ w.username }}</strong></span>
+            <span> | 💰 {{ t('amount') }}: <strong>{{ w.amount }} {{ w.currency }}</strong></span>
+
             {% if w.payout_info %}
-              | <span>🏦 {{ t('bank_info') }}: <strong>{{ w.payout_info }}</strong></span>
+              <span> | 🏦 {{ t('bank_info') }}: <strong>{{ w.payout_info }}</strong></span>
             {% elif w.email %}
-              | <span>📧 {{ w.email }}</span>
+              <span> | 📧 {{ w.email }}</span>
             {% endif %}
+
             {% if w.created_at %}
-              | <span>🕒 {{ t('time') }}: <strong>{{ w.created_at }}</strong></span>
+              <span> | 🕒 {{ t('time') }}: <strong>{{ w.created_at }}</strong></span>
             {% elif w.timestamp %}
-              | <span>🕒 {{ t('time') }}: <strong>{{ w.timestamp }}</strong></span>
+              <span> | 🕒 {{ t('time') }}: <strong>{{ w.timestamp }}</strong></span>
             {% endif %}
+
             {% if w.status %}
-              | <span class="badge-status">{{ t('status') }}: {{ w.status }}</span>
+              <span> | <span class="badge-status">{{ t('status') }}: {{ w.status }}</span></span>
             {% endif %}
           </div>
 
-          <button type="submit">
-            ✅ {{ t('approve') }}
-          </button>
+          <div style="margin-top:12px;">
+            <button type="submit" class="btn btn-pill">
+              ✅ {{ t('approve') }}
+            </button>
+          </div>
         </form>
       </div>
     {% else %}
-      <p class="empty">
-        {% if session.get('lang','ar') == 'en' %}
-          No withdrawal requests at the moment.
-        {% else %}
-          لا توجد طلبات سحب حالياً.
-        {% endif %}
-      </p>
+      <div class="card">
+        <p class="muted" style="text-align:center;margin:0;">
+          {% if session.get('lang','ar') == 'en' %}
+            No withdrawal requests at the moment.
+          {% else %}
+            لا توجد طلبات سحب حالياً.
+          {% endif %}
+        </p>
+      </div>
     {% endfor %}
   </div>
 

@@ -1,26 +1,14 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="{{ session.get('lang','ar') }}" dir="{{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   <title>إدارة رصيد البوت</title>
-  <style>
-    body{font-family:system-ui;background:#0b1220;color:#e7eefc;margin:0;padding:20px}
-    .card{background:#101a2e;border:1px solid #1f2a44;border-radius:14px;padding:16px;margin-bottom:14px}
-    input,button,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #2b3a5f;background:#0c1528;color:#e7eefc}
-    button{cursor:pointer}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-    .muted{opacity:.75}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:10px;border-bottom:1px solid #243254;text-align:right}
-    .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#1b2a49}
-    .ok{background:#123b24}
-    .bad{background:#3b1212}
-    a{color:#8ab4ff;text-decoration:none}
-  </style>
 </head>
-<body>
+
+<!-- ✅ صفحة داكنة: فقط أضفنا theme-dark (بدون تغيير أي منطق/محتوى) -->
+<body class="theme-dark">
 
   <div class="card">
     <h2>🧾 إدارة رصيد البوت (Telegram)</h2>

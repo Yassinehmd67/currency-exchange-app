@@ -1,72 +1,10 @@
 <!DOCTYPE html>
-<html lang="{{ session.get('lang','ar') }}">
+<html lang="{{ session.get('lang','ar') }}" dir="{{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }}">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   <title>{{ t('recent_transactions') }}</title>
-  <style>
-    body{
-      font-family:system-ui,"Cairo",sans-serif;
-      margin:0;
-      background:#f7f7f9;
-      direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};
-    }
-    header{
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      padding:12px 16px;
-      background:#111;
-      color:#fff;
-    }
-    header a{
-      color:#9ad;
-      text-decoration:none;
-      margin-inline:8px;
-    }
-    main{
-      max-width:960px;
-      margin:24px auto;
-      padding:0 12px;
-    }
-    .card{
-      background:#fff;
-      border:1px solid #e8e8ef;
-      border-radius:14px;
-      padding:16px;
-      box-shadow:0 2px 10px rgba(0,0,0,.03);
-    }
-    table{width:100%;border-collapse:collapse}
-    th,td{
-      padding:8px;
-      border-bottom:1px solid #eee;
-      text-align:center;
-    }
-    h1{margin:0 0 16px}
-    .muted{opacity:.8}
-
-    .pager{
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      margin-top:14px;
-      font-size:14px;
-    }
-    .pager a{
-      color:#06c;
-      text-decoration:none;
-      padding:6px 10px;
-      border-radius:999px;
-      background:#eef;
-    }
-    .pager a:hover{
-      background:#dde;
-    }
-    .page-label{
-      opacity:.8;
-    }
-  </style>
 </head>
 <body>
 <header>

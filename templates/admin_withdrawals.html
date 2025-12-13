@@ -1,59 +1,10 @@
 <!DOCTYPE html>
-<html lang="{{ session.get('lang','ar') }}">
+<html lang="{{ session.get('lang','ar') }}" dir="{{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   <title>طلبات السحب (أدمن)</title>
-  <style>
-    body{
-      font-family:system-ui,"Cairo",sans-serif;
-      margin:0;
-      background:#f7f7f9;
-      direction: {{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }};
-    }
-    header{
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      padding:12px 16px;
-      background:#111;
-      color:#fff;
-    }
-    header a{color:#9ad;text-decoration:none;margin-inline:8px}
-    main{
-      max-width:1000px;
-      margin:24px auto;
-      padding:0 12px;
-    }
-    table{width:100%;border-collapse:collapse;background:#fff}
-    th,td{
-      padding:8px;
-      border-bottom:1px solid #eee;
-      text-align:center;
-      font-size:14px;
-    }
-    th{background:#f3f4f6}
-    .badge{
-      display:inline-block;
-      padding:2px 8px;
-      border-radius:999px;
-      font-size:11px;
-      background:#facc15;
-    }
-    .btn{
-      padding:4px 10px;
-      border:none;
-      border-radius:999px;
-      cursor:pointer;
-      font-size:13px;
-    }
-    .btn-approve{background:#16a34a;color:#fff;}
-    .btn-reject{background:#f97373;color:#fff;}
-    .flash{margin:8px 0;text-align:center;font-weight:bold;}
-    .flash.error{color:#dc2626;}
-    .flash.success{color:#16a34a;}
-  </style>
 </head>
 <body>
 <header>
@@ -96,8 +47,20 @@
         <td>{{ w.email }}</td>
         <td>{{ '%.2f'|format(w.amount) }}</td>
         <td>{{ w.currency }}</td>
-        <td>{{ w.payout_info }}</td>
-        <td><span class="badge">{{ w.status }}</span></td>
+
+        <td style="max-width:260px;word-break:break-word;">
+          {{ w.payout_info }}
+        </td>
+
+        <td>
+          {% set st = (w.status or 'pending') %}
+          <span class="status-badge
+            {% if st == 'pending' %}st-pending{% elif st == 'processing' %}st-processing
+            {% elif st == 'approved' %}st-approved{% elif st == 'rejected' %}st-rejected{% endif %}">
+            {{ st }}
+          </span>
+        </td>
+
         <td>
           <form action="{{ url_for('admin_withdrawals') }}" method="POST" style="display:inline-block;">
             <input type="hidden" name="withdrawal_id" value="{{ w.id }}">
