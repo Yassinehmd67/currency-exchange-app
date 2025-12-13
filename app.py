@@ -101,6 +101,25 @@ def send_verification_email(to_email: str, token: str) -> str:
         return verify_url
 
     return verify_url
+
+def send_password_reset_email(to_email: str, token: str) -> str:
+    reset_url = f"{SITE_PUBLIC_URL}/reset_password/{token}"
+    subject = "إعادة تعيين كلمة المرور"
+    html = f"""
+    <p>مرحباً 👋</p>
+    <p>اضغط على الرابط لإعادة تعيين كلمة المرور:</p>
+    <p><a href="{reset_url}">{reset_url}</a></p>
+    <p>إذا لم تطلب إعادة تعيين كلمة المرور، تجاهل هذه الرسالة.</p>
+    """
+
+    resend.Emails.send({
+        "from": EMAIL_FROM,
+        "to": [to_email],
+        "subject": subject,
+        "html": html
+    })
+
+    return reset_url
 # ==============================
 # Telegram Linking + Bot Wallet settings
 # ==============================
@@ -1566,26 +1585,44 @@ def forgot_password():
 
         # توليد توكن وتخزينه
         token = secrets.token_urlsafe(32)
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
         db = get_db()
-        db.execute(
-            _sql(
-                "UPDATE users SET password_reset_token = ?, password_reset_sent_at = ? WHERE id = ?"
-            ),
-            (token, now_str, user["id"]),
-        )
-        db.commit()
+        try:
+            db.execute(
+                _sql(
+                    "UPDATE users SET password_reset_token = ?, password_reset_sent_at = ? WHERE id = ?"
+                ),
+                (token, now_str, user["id"]),
+            )
+            db.commit()
+        except Exception as e:
+            logging.error("forgot_password db update error: %s", e)
+            try:
+                db.rollback()
+            except Exception:
+                pass
 
-        # إرسال البريد
-        send_password_reset_email(email, token)
+            # نفس الرسالة (بدون كشف) لكن نسجّل الخطأ
+            flash("✅ إذا كان البريد مسجلاً لدينا فستصلك رسالة تحتوي على رابط إعادة التعيين.", "success")
+            return redirect(url_for("login"))
+
+        # إرسال البريد (بدون كسر الصفحة لو فشل Resend)
+        try:
+            send_password_reset_email(email, token)
+        except Exception as e:
+            logging.error("send_password_reset_email error: %s", e)
+
+            # لا نُظهر للمستخدم تفاصيل الفشل (أمان + تجربة مستخدم)
+            flash("✅ إذا كان البريد مسجلاً لدينا فستصلك رسالة تحتوي على رابط إعادة التعيين.", "success")
+            return redirect(url_for("login"))
 
         flash("✅ إذا كان البريد مسجلاً لدينا فستصلك رسالة تحتوي على رابط إعادة التعيين.", "success")
         return redirect(url_for("login"))
 
     # GET
-    return render_template("forgot_password.html")    
-
+    return render_template("forgot_password.html")
+    
 @app.route("/reset_password/<token>", methods=["GET", "POST"])
 def reset_password(token):
     if not token:
@@ -1605,15 +1642,31 @@ def reset_password(token):
     # نحاول التأكد من عدم قدم الرابط (مثلاً أكبر من 24 ساعة)
     sent_at_raw = row.get("password_reset_sent_at") if isinstance(row, dict) else row["password_reset_sent_at"]
     if sent_at_raw:
+        # نحاول ISO أولاً (يدعم Z و +00:00)
         try:
-            sent_at = datetime.strptime(str(sent_at_raw)[:19], "%Y-%m-%d %H:%M:%S")
-            if datetime.now() - sent_at > timedelta(hours=24):
+            sent_at = datetime.fromisoformat(str(sent_at_raw).replace("Z", "+00:00"))
+            if (datetime.now(timezone.utc) - sent_at.astimezone(timezone.utc)) > timedelta(hours=24):
                 flash("⏰ انتهت صلاحية رابط إعادة التعيين. اطلب رابطاً جديداً.", "error")
                 return redirect(url_for("forgot_password"))
         except Exception:
-            pass
+            # fallback: تنسيق عادي بدون timezone
+            try:
+                sent_at = datetime.strptime(str(sent_at_raw)[:19], "%Y-%m-%d %H:%M:%S")
+                if datetime.now() - sent_at > timedelta(hours=24):
+                    flash("⏰ انتهت صلاحية رابط إعادة التعيين. اطلب رابطاً جديداً.", "error")
+                    return redirect(url_for("forgot_password"))
+            except Exception:
+                pass
 
-    user_id = row["id"] if isinstance(row, dict) else row[0]
+    # استخراج user_id بشكل آمن
+    try:
+        user_id = row["id"]
+    except Exception:
+        user_id = row.get("id") if isinstance(row, dict) else None
+
+    if not user_id:
+        flash("❌ حدث خطأ في بيانات المستخدم.", "error")
+        return redirect(url_for("login"))
 
     if request.method == "POST":
         password = request.form.get("password", "")
@@ -1651,7 +1704,7 @@ def reset_password(token):
         return redirect(url_for("login"))
 
     # GET: عرض النموذج
-    return render_template("reset_password.html", token=token)    
+    return render_template("reset_password.html", token=token)
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
