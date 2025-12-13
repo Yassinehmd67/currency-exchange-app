@@ -228,51 +228,42 @@
 
 <!-- شريط علوي -->
 <div class="topbar">
-    <div>
+    <div class="topbar-left">
         {% if session.get('lang', 'ar') == 'en' %}
             👋 Welcome, {{ username }}
         {% else %}
             👋 مرحباً، {{ username }}
         {% endif %}
     </div>
-    <div>
-        <a href="{{ url_for('toggle_language') }}">
-  🌐
-  {% if session.get('lang','ar') == 'ar' %}
-    {{ t('english') }}
-  {% else %}
-    {{ t('arabic') }}
-  {% endif %}
-</a>
-    <a href="{{ url_for('notifications') }}" style="position:relative;">
-        🔔 {% if session.get('lang') == 'en' %}Notifications{% else %}الإشعارات{% endif %}
-        {% if unread_notifications and unread_notifications > 0 %}
-            <span style="
-                position:absolute;
-                top:-4px;
-                right:-8px;
-                background:#ef4444;
-                color:#fff;
-                border-radius:999px;
-                padding:0 6px;
-                font-size:11px;
-            ">
-              {{ unread_notifications }}
-            </span>
-        {% endif %}
-    </a>
 
-    <a href="{{ url_for('about') }}">ℹ️ {% if session.get('lang') == 'en' %}About{% else %}حول التطبيق{% endif %}</a>
-    <a href="{{ url_for('support') }}">🆘 {% if session.get('lang') == 'en' %}Support{% else %}الدعم{% endif %}</a>
-    <a href="{{ url_for('logout') }}">🔓 {% if session.get('lang') == 'en' %}Logout{% else %}تسجيل الخروج{% endif %}</a>
-    <a href="{{ url_for('link_telegram') }}">
-    🔗 {% if session.get('lang') == 'en' %}Link Telegram{% else %}ربط تيليجرام{% endif %}
-</a>
-</div>
+    <div class="topbar-links">
+        <a href="{{ url_for('toggle_language') }}">
+            🌐
+            {% if session.get('lang','ar') == 'ar' %}
+                {{ t('english') }}
+            {% else %}
+                {{ t('arabic') }}
+            {% endif %}
+        </a>
+
+        <a href="{{ url_for('notifications') }}" class="notif-link">
+            🔔 {% if session.get('lang') == 'en' %}Notifications{% else %}الإشعارات{% endif %}
+            {% if unread_notifications and unread_notifications > 0 %}
+                <span class="notif-badge">{{ unread_notifications }}</span>
+            {% endif %}
+        </a>
+
+        <a href="{{ url_for('about') }}">ℹ️ {% if session.get('lang') == 'en' %}About{% else %}حول التطبيق{% endif %}</a>
+        <a href="{{ url_for('support') }}">🆘 {% if session.get('lang') == 'en' %}Support{% else %}الدعم{% endif %}</a>
+        <a href="{{ url_for('logout') }}">🔓 {% if session.get('lang') == 'en' %}Logout{% else %}تسجيل الخروج{% endif %}</a>
+
+        <a href="{{ url_for('link_telegram') }}">
+            🔗 {% if session.get('lang') == 'en' %}Link Telegram{% else %}ربط تيليجرام{% endif %}
+        </a>
+    </div>
 </div>
 
 <div class="container">
-
     <!-- رسائل فلاش -->
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}

@@ -147,3 +147,315 @@ textarea {
     scroll-behavior: auto !important;
   }
 }
+
+/* ==============================
+   ✅ Topbar layout (clean on phone + desktop)
+   ============================== */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #0f172a;
+  color: #fff;
+}
+
+.topbar a { color: #fff; }
+
+.topbar-left {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.topbar-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+.topbar-links a,
+.topbar-links button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.topbar-links a:hover,
+.topbar-links button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  text-decoration: none;
+}
+
+.notif-link { position: relative; }
+
+.notif-badge {
+  position: absolute;
+  top: -6px;
+  right: -10px;
+  background: #ef4444;
+  color: #fff;
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 18px;
+  min-width: 18px;
+  text-align: center;
+}
+
+/* على الهاتف: خلي الشريط عمودي (اسم فوق + الروابط تحت) بشكل مرتب */
+@media (max-width: 768px) {
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .topbar-left {
+    text-align: center;
+  }
+
+  .topbar-links {
+    justify-content: center;
+  }
+
+  .topbar-links a,
+  .topbar-links button {
+    font-size: 14px;
+    padding: 8px 10px;
+  }
+}/* استيراد أعلام الدول (flag icons) */
+@import url('https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/6.7.0/css/flag-icons.min.css');
+
+/* ==============================
+   Global Base Styles (Light)
+   Works alongside per-page CSS
+   ============================== */
+
+/* Reset + box sizing */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  font-family: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: #f4f6f8;
+  color: #111827;
+  margin: 0;
+  padding: 0;
+  line-height: 1.5;
+}
+
+/* روابط */
+a {
+  color: inherit;
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* صور/فيديو: لا تكسر التصميم في الهاتف */
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* فورم عام (خفيف ومحايد) */
+input,
+select,
+textarea,
+button {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #ffffff;
+  color: #111827;
+  outline: none;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: rgba(59, 130, 246, 0.6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+button {
+  cursor: pointer;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: #2563eb;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+button:hover {
+  filter: brightness(0.98);
+}
+
+/* Flash messages (نفس اللي عندك + تحسين مظهره) */
+.flash {
+  text-align: center;
+  margin: 14px auto;
+  padding: 10px 12px;
+  width: min(900px, 92vw);
+  border-radius: 12px;
+  font-weight: bold;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.flash.error {
+  color: #e74c3c;
+  border-color: rgba(231, 76, 60, 0.25);
+  background: rgba(231, 76, 60, 0.08);
+}
+
+.flash.success {
+  color: #27ae60;
+  border-color: rgba(39, 174, 96, 0.25);
+  background: rgba(39, 174, 96, 0.08);
+}
+
+.flash.info {
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.25);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+/* لمسة مهمة للهاتف: أهداف لمس أفضل */
+a,
+button,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+/* جداول على الهاتف: خليها scroll بدل ما تخرب الصفحة */
+@media (max-width: 768px) {
+  body {
+    font-size: 15px;
+  }
+
+  table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* احترام إعداد “تقليل الحركة” */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ==============================
+   ✅ Topbar layout (clean on phone + desktop)
+   ============================== */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #0f172a;
+  color: #fff;
+}
+
+.topbar a { color: #fff; }
+
+.topbar-left {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.topbar-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+
+.topbar-links a,
+.topbar-links button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+.topbar-links a:hover,
+.topbar-links button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  text-decoration: none;
+}
+
+.notif-link { position: relative; }
+
+.notif-badge {
+  position: absolute;
+  top: -6px;
+  right: -10px;
+  background: #ef4444;
+  color: #fff;
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 18px;
+  min-width: 18px;
+  text-align: center;
+}
+
+/* على الهاتف: خلي الشريط عمودي (اسم فوق + الروابط تحت) بشكل مرتب */
+@media (max-width: 768px) {
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .topbar-left {
+    text-align: center;
+  }
+
+  .topbar-links {
+    justify-content: center;
+  }
+
+  .topbar-links a,
+  .topbar-links button {
+    font-size: 14px;
+    padding: 8px 10px;
+  }
+}
