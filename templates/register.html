@@ -61,6 +61,7 @@
             border-color:#3498db;
             box-shadow:0 0 0 2px rgba(52,152,219,.15);
         }
+
         .phone-row{
             display:flex;
             gap:6px;
@@ -71,6 +72,7 @@
         .phone-row .phone-input{
             flex:1;
         }
+
         button{
             width:100%;
             margin-top:6px;
@@ -92,12 +94,13 @@
             text-decoration:none;
         }
         .link:hover{ text-decoration:underline; }
+
         .flash{
-            color:#e74c3c;
             margin-bottom:10px;
             font-size:13px;
             text-align:center;
         }
+
         .lang-switch{
             position:absolute;
             top:-6px;
@@ -145,6 +148,41 @@
             line-height:1.6;
             text-align:{{ 'right' if session.get('lang','ar')=='ar' else 'left' }};
         }
+
+        /* ==========================
+           Responsive (Mobile)
+           - يشتغل فقط على الشاشات الصغيرة
+           ========================== */
+        @media (max-width: 520px){
+            .wrapper{
+                padding:16px;
+                max-width:520px;
+            }
+            .box{
+                padding:18px 16px 16px;
+                border-radius:14px;
+            }
+            h2{
+                font-size:20px;
+                margin-bottom:14px;
+            }
+            .phone-row{
+                flex-direction:column;
+            }
+            .phone-row .country-select{
+                flex:1 1 auto;
+            }
+            button{
+                padding:12px;
+                font-size:15px;
+            }
+        }
+
+        @media (max-width: 360px){
+            .wrapper{ padding:12px; }
+            .box{ padding:16px 14px 14px; }
+            h2{ font-size:19px; }
+        }
     </style>
 </head>
 <body>
@@ -163,7 +201,7 @@
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
             {% for category, message in messages %}
-              <p class="flash">{{ message }}</p>
+              <p class="flash {{ category }}">{{ message }}</p>
             {% endfor %}
           {% endif %}
         {% endwith %}
@@ -184,14 +222,50 @@
                 <div class="phone-row">
                     <div class="country-select">
                         <select id="phoneCountry">
-                            <!-- يمكن إضافة دول أخرى لاحقاً بسهولة -->
+                            <!-- MENA -->
                             <option value="+212" selected>🇲🇦 +212 (MA)</option>
-                            <option value="+966">🇸🇦 +966 (SA)</option>
+                            <option value="+213">🇩🇿 +213 (DZ)</option>
+                            <option value="+216">🇹🇳 +216 (TN)</option>
+                            <option value="+218">🇱🇾 +218 (LY)</option>
                             <option value="+20">🇪🇬 +20 (EG)</option>
+                            <option value="+966">🇸🇦 +966 (SA)</option>
                             <option value="+971">🇦🇪 +971 (AE)</option>
-                            <option value="+1">🇺🇸 +1 (US)</option>
-                            <option value="+44">🇬🇧 +44 (UK)</option>
+                            <option value="+965">🇰🇼 +965 (KW)</option>
+                            <option value="+974">🇶🇦 +974 (QA)</option>
+                            <option value="+973">🇧🇭 +973 (BH)</option>
+                            <option value="+968">🇴🇲 +968 (OM)</option>
+                            <option value="+962">🇯🇴 +962 (JO)</option>
+                            <option value="+961">🇱🇧 +961 (LB)</option>
+                            <option value="+963">🇸🇾 +963 (SY)</option>
+                            <option value="+964">🇮🇶 +964 (IQ)</option>
+                            <option value="+970">🇵🇸 +970 (PS)</option>
+                            <option value="+967">🇾🇪 +967 (YE)</option>
+
+                            <!-- Europe / Others -->
                             <option value="+33">🇫🇷 +33 (FR)</option>
+                            <option value="+34">🇪🇸 +34 (ES)</option>
+                            <option value="+39">🇮🇹 +39 (IT)</option>
+                            <option value="+49">🇩🇪 +49 (DE)</option>
+                            <option value="+32">🇧🇪 +32 (BE)</option>
+                            <option value="+31">🇳🇱 +31 (NL)</option>
+                            <option value="+41">🇨🇭 +41 (CH)</option>
+                            <option value="+351">🇵🇹 +351 (PT)</option>
+                            <option value="+44">🇬🇧 +44 (UK)</option>
+
+                            <!-- Americas -->
+                            <option value="+1">🇺🇸 +1 (US/CA)</option>
+                            <option value="+52">🇲🇽 +52 (MX)</option>
+                            <option value="+55">🇧🇷 +55 (BR)</option>
+
+                            <!-- Africa -->
+                            <option value="+221">🇸🇳 +221 (SN)</option>
+                            <option value="+225">🇨🇮 +225 (CI)</option>
+                            <option value="+234">🇳🇬 +234 (NG)</option>
+
+                            <!-- Asia -->
+                            <option value="+90">🇹🇷 +90 (TR)</option>
+                            <option value="+7">🇷🇺 +7 (RU)</option>
+                            <option value="+91">🇮🇳 +91 (IN)</option>
                         </select>
                     </div>
                     <div class="phone-input">
@@ -239,7 +313,7 @@
                 {% if session.get('lang')=='en' %}
                     After registration we'll send you an activation link to your email to verify your account.
                 {% else %}
-                    بعد إنشاء الحساب سيتم إرسال رابط تفعيل إلى بريدك الإلكتروني لتأكيد الحساب (سيتم تفعيل هذه الخطوة من جانب الخادم).
+                    بعد إنشاء الحساب سيتم إرسال رابط تفعيل إلى بريدك الإلكتروني لتأكيد الحساب.
                 {% endif %}
             </div>
         </form>
