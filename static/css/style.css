@@ -586,6 +586,47 @@ body.theme-dark .status-badge{
 .page-label{ opacity:.8; }
 
 /* ==============================
+   ✅ Tx pager buttons (Prev/Next) - أصغر + رمادي
+   ============================== */
+.tx-pager{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tx-pager button{
+  padding: 6px 10px !important;      /* أصغر */
+  font-size: 13px !important;        /* أصغر */
+  font-weight: 800;
+  border-radius: 10px !important;
+
+  background: rgba(107,114,128,0.12) !important; /* رمادي فاتح */
+  border: 1px solid rgba(107,114,128,0.28) !important;
+  color: #374151 !important;         /* نص رمادي غامق */
+}
+
+.tx-pager button:hover{
+  background: rgba(107,114,128,0.18) !important;
+}
+
+.tx-pager button:disabled{
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* Dark theme */
+body.theme-dark .tx-pager button{
+  background: rgba(255,255,255,0.10) !important;
+  border-color: rgba(255,255,255,0.18) !important;
+  color: rgba(255,255,255,0.86) !important;
+}
+body.theme-dark .tx-pager button:hover{
+  background: rgba(255,255,255,0.14) !important;
+}
+
+/* ==============================
    ✅ Auth Pages (login/register/forgot/reset)
    ============================== */
 .wrapper{
