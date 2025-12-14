@@ -6,8 +6,11 @@ import sqlite3
 import logging
 import hashlib
 import requests  # Telegram Bot API
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
+from flask import jsonify, session
 from decimal import Decimal, ROUND_DOWN
+from flask import jsonify, session
+import time
 
 import csv
 import io
@@ -1622,7 +1625,7 @@ def forgot_password():
 
     # GET
     return render_template("forgot_password.html")
-    
+
 @app.route("/reset_password/<token>", methods=["GET", "POST"])
 def reset_password(token):
     if not token:
@@ -2435,6 +2438,109 @@ def admin_bot_balance():
 
     # GET: عرض بسيط
     return render_template("admin_bot_balance.html")
+
+@app.post("/activate_reward")
+def activate_reward():
+    user_id = session.get("user_id")
+    if not user_id:
+        return jsonify(success=False, message="يجب تسجيل الدخول أولاً"), 401
+
+    if USE_POSTGRES:
+        db = psycopg2.connect(DATABASE_URL)
+        try:
+            with db:
+                with db.cursor() as cur:
+                    # اقفل صف المستخدم لمنع السباق
+                    cur.execute("""
+                        SELECT last_reward_claim_at, now()
+                        FROM users
+                        WHERE id = %s
+                        FOR UPDATE
+                    """, (user_id,))
+                    row = cur.fetchone()
+                    if not row:
+                        return jsonify(success=False, message="المستخدم غير موجود"), 404
+
+                    last_claim, now = row
+
+                    if last_claim is not None and (now - last_claim) < COOLDOWN:
+                        remaining = COOLDOWN - (now - last_claim)
+                        return jsonify(
+                            success=False,
+                            message="لم يحن وقت المكافأة بعد",
+                            remaining_seconds=int(remaining.total_seconds())
+                        ), 429
+
+                    # حدّث وقت المكافأة
+                    cur.execute("""
+                        UPDATE users
+                        SET last_reward_claim_at = now()
+                        WHERE id = %s
+                    """, (user_id,))
+
+                    # أضف 0.02 إلى USD داخل balances (Upsert)
+                    cur.execute("""
+                        INSERT INTO balances (user_id, currency, amount)
+                        VALUES (%s, 'USD', %s)
+                        ON CONFLICT (user_id, currency)
+                        DO UPDATE SET amount = balances.amount + EXCLUDED.amount
+                        RETURNING amount
+                    """, (user_id, REWARD_AMOUNT))
+
+                    new_usd = cur.fetchone()[0]
+
+            return jsonify(success=True, message="✅ تم إضافة 0.02$ إلى رصيد USD", new_usd=float(new_usd))
+
+        finally:
+            db.close()
+
+    # ===== SQLite fallback =====
+    db = sqlite3.connect("database.db")
+    db.row_factory = sqlite3.Row
+    try:
+        cur = db.cursor()
+
+        cur.execute("SELECT last_reward_claim_at FROM users WHERE id = ?", (user_id,))
+        u = cur.fetchone()
+        if not u:
+            return jsonify(success=False, message="المستخدم غير موجود"), 404
+
+        # وقت الآن (نخزنه نص)
+        now = datetime.utcnow()
+        last = u["last_reward_claim_at"]
+
+        if last:
+            # حاول parse ISO
+            try:
+                last_dt = datetime.fromisoformat(last)
+            except:
+                last_dt = None
+
+            if last_dt and (now - last_dt) < COOLDOWN:
+                remaining = COOLDOWN - (now - last_dt)
+                return jsonify(
+                    success=False,
+                    message="لم يحن وقت المكافأة بعد",
+                    remaining_seconds=int(remaining.total_seconds())
+                ), 429
+
+        cur.execute("UPDATE users SET last_reward_claim_at = ? WHERE id = ?", (now.isoformat(), user_id))
+
+        # upsert لجدول balances
+        cur.execute("""
+            INSERT INTO balances (user_id, currency, amount)
+            VALUES (?, 'USD', ?)
+            ON CONFLICT(user_id, currency) DO UPDATE SET amount = amount + excluded.amount
+        """, (user_id, REWARD_AMOUNT))
+
+        cur.execute("SELECT amount FROM balances WHERE user_id=? AND currency='USD'", (user_id,))
+        new_usd = cur.fetchone()[0]
+
+        db.commit()
+        return jsonify(success=True, message="✅ تم إضافة 0.02$ إلى رصيد USD", new_usd=float(new_usd))
+
+    finally:
+        db.close()    
 
 # ==============================
 # صفحة الإشعارات للمستخدم

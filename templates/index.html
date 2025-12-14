@@ -1,480 +1,541 @@
 <!DOCTYPE html>
 <html lang="{{ session.get('lang','ar') }}" dir="{{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }}">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1"/>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <title>
-        {% if session.get('lang') == 'en' %}
-            Dashboard
-        {% else %}
-            لوحة التحكم
-        {% endif %}
-    </title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v=1) }}">
 
-    <!-- أعلام العملات -->
-    <link rel="stylesheet"
-          href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/6.7.0/css/flag-icons.min.css">
+  <title>
+    {% if session.get('lang') == 'en' %}
+      Dashboard
+    {% else %}
+      لوحة التحكم
+    {% endif %}
+  </title>
+
+  <!-- أعلام العملات -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/flag-icon-css/6.7.0/css/flag-icons.min.css">
 </head>
+
 <body>
 
 <!-- شريط علوي -->
 <div class="topbar">
-    <div class="topbar-left">
-        {% if session.get('lang', 'ar') == 'en' %}
-            👋 Welcome, {{ username }}
-        {% else %}
-            👋 مرحباً، {{ username }}
-        {% endif %}
+  <div class="topbar-left">
+    <a class="lang-btn" href="{{ url_for('toggle_language') }}">
+      🌐
+      {% if session.get('lang','ar') == 'ar' %}
+        {{ t('english') }}
+      {% else %}
+        {{ t('arabic') }}
+      {% endif %}
+    </a>
+
+    <div class="welcome">
+      {% if session.get('lang', 'ar') == 'en' %}
+        👋 Welcome, {{ username }}
+      {% else %}
+        👋 مرحباً، {{ username }}
+      {% endif %}
     </div>
+  </div>
 
-    <div class="topbar-links">
-        <a href="{{ url_for('toggle_language') }}">
-            🌐
-            {% if session.get('lang','ar') == 'ar' %}
-                {{ t('english') }}
-            {% else %}
-                {{ t('arabic') }}
-            {% endif %}
-        </a>
+  <div class="topbar-links">
 
-        <a href="{{ url_for('notifications') }}" class="notif-link">
-            🔔 {% if session.get('lang') == 'en' %}Notifications{% else %}الإشعارات{% endif %}
-            {% if unread_notifications and unread_notifications > 0 %}
-                <span class="badge notif-badge">{{ unread_notifications }}</span>
-            {% endif %}
-        </a>
+    <a href="{{ url_for('notifications') }}" class="notif-link">
+      🔔 {% if session.get('lang') == 'en' %}Notifications{% else %}الإشعارات{% endif %}
+      {% if unread_notifications and unread_notifications > 0 %}
+        <span class="badge notif-badge">{{ unread_notifications }}</span>
+      {% endif %}
+    </a>
 
-        <a href="{{ url_for('about') }}">ℹ️ {% if session.get('lang') == 'en' %}About{% else %}حول التطبيق{% endif %}</a>
-        <a href="{{ url_for('support') }}">🆘 {% if session.get('lang') == 'en' %}Support{% else %}الدعم{% endif %}</a>
-        <a href="{{ url_for('logout') }}">🔓 {% if session.get('lang') == 'en' %}Logout{% else %}تسجيل الخروج{% endif %}</a>
+    <a href="{{ url_for('about') }}">
+      ℹ️ {% if session.get('lang') == 'en' %}About{% else %}حول التطبيق{% endif %}
+    </a>
 
-        <a href="{{ url_for('link_telegram') }}">
-            🔗 {% if session.get('lang') == 'en' %}Link Telegram{% else %}ربط تيليجرام{% endif %}
-        </a>
-    </div>
-</div>
+    <a href="{{ url_for('support') }}">
+      🆘 {% if session.get('lang') == 'en' %}Support{% else %}الدعم{% endif %}
+    </a>
+
+    <!-- زر المكافأة (بدون route) -->
+    <a href="#" class="reward-link" onclick="openReward(); return false;">
+      🎁 {% if session.get('lang') == 'en' %}Rewards{% else %}المكافأة{% endif %}
+    </a>
+
+    <a href="{{ url_for('link_telegram') }}">
+      🔗 {% if session.get('lang') == 'en' %}Link Telegram{% else %}ربط تيليجرام{% endif %}
+    </a>
+
+    <a href="{{ url_for('logout') }}">
+      🔓 {% if session.get('lang') == 'en' %}Logout{% else %}تسجيل الخروج{% endif %}
+    </a>
+
+  </div>
+</div> <!-- ✅ مهم: إغلاق topbar كان ناقص -->
 
 <div class="container">
-    <!-- رسائل فلاش -->
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-        <div class="card">
-          {% for category, message in messages %}
-            <p class="flash {{ category }}">{{ message }}</p>
-          {% endfor %}
+
+  <!-- رسائل فلاش -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="card">
+        {% for category, message in messages %}
+          <p class="flash {{ category }}">{{ message }}</p>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <!-- ✅ الأرصدة (مكان العملات) -->
+  <div class="card">
+    <h2>
+      {% if session.get('lang') == 'en' %}
+        💰 Your Balances
+      {% else %}
+        💰 أرصدتك الحالية
+      {% endif %}
+    </h2>
+
+    <div class="balance-grid">
+      {% for c, v in user.balance.items() %}
+        <div class="balance-card">
+          {% if c in currency_to_country %}
+            <span class="flag-icon flag-icon-{{ currency_to_country[c] }}"></span><br>
+          {% endif %}
+          <strong>{{ c }}</strong><br>
+          <span class="balance-amount" data-currency="{{ c }}">
+            {{ "%.2f"|format(v) }}
+          </span>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- شبك Binance + التحويل + السحب -->
+  <div class="two-cols">
+
+    <!-- شحن عبر Binance UID -->
+    <div class="card">
+      <h3 class="section-title">
+        {% if session.get('lang') == 'en' %}
+          💳 Top-up via Binance Pay (UID)
+        {% else %}
+          💳 شحن الرصيد عبر Binance Pay (UID)
+        {% endif %}
+      </h3>
+
+      <div class="note">
+        {% if session.get('lang') == 'en' %}
+          This is our Binance Pay UID to receive USDT:
+        {% else %}
+          هذا هو UID الخاص بنا في Binance Pay لاستقبال USDT:
+        {% endif %}
+        <br><strong>{{ binance_uid }}</strong>
+      </div>
+
+      <div class="note">
+        {% if session.get('lang') == 'en' %}
+          1️⃣ Open Binance ➝ Binance Pay<br>
+          2️⃣ Send USDT to the UID above<br>
+          3️⃣ Paste the TxID / note here and choose the currency to credit in your account.
+        {% else %}
+          ١️⃣ افتح تطبيق باينانس ➝ Binance Pay<br>
+          ٢️⃣ أرسل USDT إلى الـ UID بالأعلى<br>
+          ٣️⃣ الصق رقم العملية (TxID) أو ملاحظة التحويل واختر العملة التي تريد شحنها في حسابك.
+        {% endif %}
+      </div>
+
+      {% if binance_auto_100_url %}
+        <div class="note">
+          {% if session.get('lang') == 'en' %}
+            You can also use a quick automatic payment link (fixed 100&nbsp;USDT):
+          {% else %}
+            يمكنك أيضاً استخدام رابط شحن سريع أوتوماتيكي بقيمة ثابتة 100&nbsp;USDT:
+          {% endif %}
+        </div>
+
+        <div class="auto-100-wrap">
+          <a href="{{ binance_auto_100_url }}" target="_blank" class="btn-pay100">
+            {% if session.get('lang') == 'en' %}
+              ⚡ Pay 100 USDT automatically
+            {% else %}
+              ⚡ شحن فوري 100 USDT
+            {% endif %}
+          </a>
         </div>
       {% endif %}
-    {% endwith %}
 
-    <!-- الأرصدة -->
-    <div class="card">
-        <h2>
-            {% if session.get('lang') == 'en' %}
-                💰 Your Balances
-            {% else %}
-                💰 أرصدتك الحالية
-            {% endif %}
-        </h2>
+      <form action="{{ url_for('binance_deposit_proof') }}" method="POST">
+        <input type="number" step="0.01" min="0"
+               name="amount"
+               placeholder="{% if session.get('lang') == 'en' %}Amount to credit{% else %}المبلغ المراد إضافته في حسابك{% endif %}"
+               required>
 
-        <div class="balance-grid">
-            {% for c, v in user.balance.items() %}
-                <div class="balance-card">
-                    {% if c in currency_to_country %}
-                        <span class="flag-icon flag-icon-{{ currency_to_country[c] }}"></span><br>
-                    {% endif %}
-                    <strong>{{ c }}</strong><br>
-                    <span class="balance-amount" data-currency="{{ c }}">
-                        {{ "%.2f"|format(v) }}
-                    </span>
-                </div>
-            {% endfor %}
-        </div>
-    </div>
+        <select name="currency" required>
+          {% for c in currencies %}
+            <option value="{{ c }}">{{ c }}</option>
+          {% endfor %}
+        </select>
 
-    <!-- شبك Binance + التحويل + السحب -->
-    <div class="two-cols">
-
-        <!-- شحن عبر Binance UID -->
-        <div class="card">
-            <h3 class="section-title">
-                {% if session.get('lang') == 'en' %}
-                    💳 Top-up via Binance Pay (UID)
-                {% else %}
-                    💳 شحن الرصيد عبر Binance Pay (UID)
-                {% endif %}
-            </h3>
-
-            <div class="note">
-                {% if session.get('lang') == 'en' %}
-This is our Binance Pay UID to receive USDT:
-                {% else %}
-هذا هو UID الخاص بنا في Binance Pay لاستقبال USDT:
-                {% endif %}
-                <br><strong>{{ binance_uid }}</strong>
-            </div>
-
-            <div class="note">
-                {% if session.get('lang') == 'en' %}
-1️⃣ Open Binance ➝ Binance Pay  
-2️⃣ Send USDT to the UID above  
-3️⃣ Paste the TxID / note here and choose the currency to credit in your account.
-                {% else %}
-١️⃣ افتح تطبيق باينانس ➝ Binance Pay  
-٢️⃣ أرسل USDT إلى الـ UID بالأعلى  
-٣️⃣ الصق رقم العملية (TxID) أو ملاحظة التحويل واختر العملة التي تريد شحنها في حسابك.
-                {% endif %}
-            </div>
-
-            {% if binance_auto_100_url %}
-              <div class="note">
-                {% if session.get('lang') == 'en' %}
-You can also use a quick automatic payment link (fixed 100&nbsp;USDT):
-                {% else %}
-يمكنك أيضاً استخدام رابط شحن سريع أوتوماتيكي بقيمة ثابتة 100&nbsp;USDT:
-                {% endif %}
-              </div>
-
-              <div style="text-align:center; margin:10px 0 16px;">
-                <a href="{{ binance_auto_100_url }}" target="_blank"
-                   style="display:inline-block;padding:10px 18px;border-radius:999px;
-                          background:#10b981;color:#fff;text-decoration:none;
-                          font-weight:600;font-size:14px;">
-                  {% if session.get('lang') == 'en' %}
-                    ⚡ Pay 100 USDT automatically
-                  {% else %}
-                    ⚡ شحن فوري 100 USDT
-                  {% endif %}
-                </a>
-              </div>
-            {% endif %}
-
-            <form action="{{ url_for('binance_deposit_proof') }}" method="POST">
-                <input type="number" step="0.01" min="0"
-                       name="amount"
-                       placeholder="{% if session.get('lang') == 'en' %}Amount to credit{% else %}المبلغ المراد إضافته في حسابك{% endif %}"
-                       required>
-
-                <select name="currency" required>
-                    {% for c in currencies %}
-                        <option value="{{ c }}">{{ c }}</option>
-                    {% endfor %}
-                </select>
-
-                <textarea name="txid" required
-                          placeholder="{% if session.get('lang') == 'en' %}
+        <textarea name="txid" required
+                  placeholder="{% if session.get('lang') == 'en' %}
 TxID / proof (e.g. Binance Pay transaction ID)
-                          {% else %}
+                  {% else %}
 رقم العملية (TxID) أو وصف مختصر للتحويل كما يظهر في Binance Pay
-                          {% endif %}"></textarea>
+                  {% endif %}"></textarea>
 
-                <button type="submit">
-                    {% if session.get('lang') == 'en' %}
-                        Send Top-up Proof
-                    {% else %}
-                        إرسال إثبات الشحن
-                    {% endif %}
-                </button>
-            </form>
+        <button type="submit">
+          {% if session.get('lang') == 'en' %}
+            Send Top-up Proof
+          {% else %}
+            إرسال إثبات الشحن
+          {% endif %}
+        </button>
+      </form>
 
-            <div class="note">
-                {% if session.get('lang') == 'en' %}
-Top-up will be reviewed manually, then the balance will be added to your account.
-                {% else %}
-سيتم مراجعة الشحن يدويًا، ثم إضافة الرصيد إلى حسابك بعد التأكد من التحويل.
-                {% endif %}
-            </div>
-        </div>
+      <div class="note">
+        {% if session.get('lang') == 'en' %}
+          Top-up will be reviewed manually, then the balance will be added to your account.
+        {% else %}
+          سيتم مراجعة الشحن يدويًا، ثم إضافة الرصيد إلى حسابك بعد التأكد من التحويل.
+        {% endif %}
+      </div>
+    </div>
 
-        <!-- طلب السحب -->
-        <div class="card">
-            <h3 class="section-title">
-                {% if session.get('lang') == 'en' %}
-                    📤 Withdrawal Request
-                {% else %}
-                    📤 طلب سحب
-                {% endif %}
-            </h3>
+    <!-- طلب السحب -->
+    <div class="card">
+      <h3 class="section-title">
+        {% if session.get('lang') == 'en' %}
+          📤 Withdrawal Request
+        {% else %}
+          📤 طلب سحب
+        {% endif %}
+      </h3>
 
-            <form action="{{ url_for('withdraw_request') }}" method="POST">
-                <input type="number" step="0.01" min="0"
-                       name="amount"
-                       placeholder="{% if session.get('lang') == 'en' %}Amount to withdraw{% else %}المبلغ المراد سحبه{% endif %}"
-                       required>
+      <form action="{{ url_for('withdraw_request') }}" method="POST">
+        <input type="number" step="0.01" min="0"
+               name="amount"
+               placeholder="{% if session.get('lang') == 'en' %}Amount to withdraw{% else %}المبلغ المراد سحبه{% endif %}"
+               required>
 
-                <select name="currency" required>
-                    {% for c in currencies %}
-                        <option value="{{ c }}">{{ c }}</option>
-                    {% endfor %}
-                </select>
+        <select name="currency" required>
+          {% for c in currencies %}
+            <option value="{{ c }}">{{ c }}</option>
+          {% endfor %}
+        </select>
 
-                <textarea name="payout_info" required
-                          placeholder="{% if session.get('lang') == 'en' %}
+        <textarea name="payout_info" required
+                  placeholder="{% if session.get('lang') == 'en' %}
 Payout info (e.g. bank / wallet / agent name)
-                          {% else %}
+                  {% else %}
 معلومات جهة الاستلام (مثال: حساب بنكي، محفظة رقمية، اسم الوكيل...)
-                          {% endif %}"></textarea>
+                  {% endif %}"></textarea>
 
-                <button type="submit">
-                    {% if session.get('lang') == 'en' %}
-                        Send Withdraw Request
-                    {% else %}
-                        إرسال طلب السحب
-                    {% endif %}
-                </button>
-            </form>
+        <button type="submit">
+          {% if session.get('lang') == 'en' %}
+            Send Withdraw Request
+          {% else %}
+            إرسال طلب السحب
+          {% endif %}
+        </button>
+      </form>
 
-            <div class="note">
-                {% if session.get('lang') == 'en' %}
-Your balance will be locked immediately and the withdrawal will be processed manually.
-                {% else %}
-سيتم حجز المبلغ مباشرة من رصيدك، ثم معالجة طلب السحب يدويًا وإرساله لك حسب البيانات التي أدخلتها.
-                {% endif %}
-            </div>
-        </div>
+      <div class="note">
+        {% if session.get('lang') == 'en' %}
+          Your balance will be locked immediately and the withdrawal will be processed manually.
+        {% else %}
+          سيتم حجز المبلغ مباشرة من رصيدك، ثم معالجة طلب السحب يدويًا وإرساله لك حسب البيانات التي أدخلتها.
+        {% endif %}
+      </div>
     </div>
 
-    <!-- محول العملات -->
-    <div class="card">
-        <h3 class="section-title">
-            {% if session.get('lang') == 'en' %}
-                💱 Currency Converter (Inside your balance)
-            {% else %}
-                💱 محول العملات (داخل رصيدك)
-            {% endif %}
-        </h3>
+  </div>
 
-        <form id="convert-form" onsubmit="event.preventDefault(); convertCurrency();">
-            <input type="number" id="convert_amount" step="0.01" min="0"
-                   placeholder="{% if session.get('lang') == 'en' %}Amount{% else %}المبلغ{% endif %}"
-                   required>
+  <!-- محول العملات -->
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        💱 Currency Converter (Inside your balance)
+      {% else %}
+        💱 محول العملات (داخل رصيدك)
+      {% endif %}
+    </h3>
 
-            <select id="convert_from" required>
-                {% for c in currencies %}
-                    <option value="{{ c }}">{{ c }}</option>
-                {% endfor %}
-            </select>
+    <form id="convert-form" onsubmit="event.preventDefault(); convertCurrency();">
+      <input type="number" id="convert_amount" step="0.01" min="0"
+             placeholder="{% if session.get('lang') == 'en' %}Amount{% else %}المبلغ{% endif %}"
+             required>
 
-            <select id="convert_to" required>
-                {% for c in currencies %}
-                    <option value="{{ c }}">{{ c }}</option>
-                {% endfor %}
-            </select>
+      <select id="convert_from" required>
+        {% for c in currencies %}
+          <option value="{{ c }}">{{ c }}</option>
+        {% endfor %}
+      </select>
 
-            <button type="submit">
-                {% if session.get('lang') == 'en' %}
-                    Convert
-                {% else %}
-                    تحويل
-                {% endif %}
-            </button>
-        </form>
+      <select id="convert_to" required>
+        {% for c in currencies %}
+          <option value="{{ c }}">{{ c }}</option>
+        {% endfor %}
+      </select>
 
-        <p id="convert_result" style="text-align:center; font-weight:bold; margin-top:8px;"></p>
+      <button type="submit">
+        {% if session.get('lang') == 'en' %}
+          Convert
+        {% else %}
+          تحويل
+        {% endif %}
+      </button>
+    </form>
+
+    <!-- (اختياري) إذا عندك عنصر نتيجة التحويل -->
+    <div id="convert_result" class="note"></div>
+  </div>
+
+  <!-- سجل العمليات -->
+  <div class="card">
+    <div class="tx-toggle" onclick="toggleTx()">
+      {% if session.get('lang') == 'en' %}
+        📜 Show / Hide Transaction History
+      {% else %}
+        📜 إظهار / إخفاء سجل العمليات
+      {% endif %}
     </div>
 
-    <!-- سجل العمليات (مع 5 عناصر في كل صفحة) -->
-    <div class="card">
-        <div class="tx-toggle" onclick="toggleTx()">
-            {% if session.get('lang') == 'en' %}
-                📜 Show / Hide Transaction History
-            {% else %}
-                📜 إظهار / إخفاء سجل العمليات
+    <ul id="tx_list" class="tx-list" style="display:none;">
+      {% if user.transactions %}
+        {% for tx in user.transactions|reverse %}
+          <li class="tx-item real-tx">
+            <div class="badge">{{ tx.type }}</div><br>
+            <span class="ts">🕒 {{ tx.timestamp }}</span><br>
+            💰 {{ tx.amount }} {{ tx.currency or '' }}<br>
+            {% if tx.details %}
+              📝 {{ tx.details }}
             {% endif %}
-        </div>
+          </li>
+        {% endfor %}
+      {% else %}
+        <li class="tx-item no-tx">
+          {% if session.get('lang') == 'en' %}
+            No transactions yet.
+          {% else %}
+            لا توجد عمليات بعد.
+          {% endif %}
+        </li>
+      {% endif %}
+    </ul>
 
-        <ul id="tx_list" class="tx-list" style="display:none;">
-            {% if user.transactions %}
-                {% for tx in user.transactions|reverse %}
-                    <li class="tx-item real-tx">
-                        <div class="badge">{{ tx.type }}</div><br>
-                        <span class="ts">🕒 {{ tx.timestamp }}</span><br>
-                        💰 {{ tx.amount }} {{ tx.currency or '' }}<br>
-                        {% if tx.details %}
-                            📝 {{ tx.details }}
-                        {% endif %}
-                    </li>
-                {% endfor %}
-            {% else %}
-                <li class="tx-item no-tx">
-                    {% if session.get('lang') == 'en' %}
-                        No transactions yet.
-                    {% else %}
-                        لا توجد عمليات بعد.
-                    {% endif %}
-                </li>
-            {% endif %}
-        </ul>
+    <div id="tx_pager" class="tx-pager">
+      <button id="tx_prev" type="button" onclick="txPrev()">
+        {% if session.get('lang') == 'en' %}
+          ⬅️ Previous
+        {% else %}
+          ⬅️ السابق
+        {% endif %}
+      </button>
 
-        <div id="tx_pager" class="tx-pager">
-            <button id="tx_prev" type="button" onclick="txPrev()">
-                {% if session.get('lang') == 'en' %}
-                    ⬅️ Previous
-                {% else %}
-                    ⬅️ السابق
-                {% endif %}
-            </button>
-            <span id="tx_page_label" class="tx-page-label">
-                {% if session.get('lang') == 'en' %}
-                    Page 1
-                {% else %}
-                    الصفحة 1
-                {% endif %}
-            </span>
-            <button id="tx_next" type="button" onclick="txNext()">
-                {% if session.get('lang') == 'en' %}
-                    Next ➡️
-                {% else %}
-                    التالي ➡️
-                {% endif %}
-            </button>
-        </div>
+      <span id="tx_page_label" class="tx-page-label">
+        {% if session.get('lang') == 'en' %}
+          Page 1
+        {% else %}
+          الصفحة 1
+        {% endif %}
+      </span>
+
+      <button id="tx_next" type="button" onclick="txNext()">
+        {% if session.get('lang') == 'en' %}
+          Next ➡️
+        {% else %}
+          التالي ➡️
+        {% endif %}
+      </button>
     </div>
+  </div>
 
+</div> <!-- نهاية container -->
+
+<!-- مودال المكافأة -->
+<div id="rewardModal" class="modal" style="display:none;">
+  <div class="modal-card">
+    <h3>
+      {% if session.get('lang') == 'en' %}
+        🎁 Rewards
+      {% else %}
+        🎁 المكافأة
+      {% endif %}
+    </h3>
+
+    <p class="note">
+      {% if session.get('lang') == 'en' %}
+        Activate a reward package: $0.02 every 12 hours.
+      {% else %}
+        تفعيل باقة مكافأة: 0.02$ كل 12 ساعة.
+      {% endif %}
+    </p>
+
+    <button type="button" class="btn" onclick="activateReward()">
+      {% if session.get('lang') == 'en' %}
+        Activate
+      {% else %}
+        تفعيل
+      {% endif %}
+    </button>
+
+    <button type="button" class="btn btn-secondary" onclick="closeReward()" style="margin-top:8px;">
+      {% if session.get('lang') == 'en' %}
+        Close
+      {% else %}
+        إغلاق
+      {% endif %}
+    </button>
+  </div>
 </div>
 
 <script>
-    // ========= سجل العمليات في الداشبورد (5 في الصفحة) =========
-    const TX_PAGE_SIZE = 5;
-    let txPage = 1;
-    let txInitialized = false;
+  // ========= سجل العمليات في الداشبورد (5 في الصفحة) =========
+  const TX_PAGE_SIZE = 5;
+  let txPage = 1;
+  let txInitialized = false;
 
-    function renderTxPage() {
-        const items = document.querySelectorAll('#tx_list .tx-item.real-tx');
-        const pager = document.getElementById('tx_pager');
-        const label = document.getElementById('tx_page_label');
-        const prevBtn = document.getElementById('tx_prev');
-        const nextBtn = document.getElementById('tx_next');
+  function renderTxPage() {
+    const items = document.querySelectorAll('#tx_list .tx-item.real-tx');
+    const pager = document.getElementById('tx_pager');
+    const label = document.getElementById('tx_page_label');
+    const prevBtn = document.getElementById('tx_prev');
+    const nextBtn = document.getElementById('tx_next');
 
-        const total = items.length;
-        if (!total) {
-            if (pager) pager.style.display = 'none';
-            return;
-        }
-
-        const totalPages = Math.ceil(total / TX_PAGE_SIZE);
-        if (txPage > totalPages) txPage = totalPages;
-        if (txPage < 1) txPage = 1;
-
-        const start = (txPage - 1) * TX_PAGE_SIZE;
-        const end = start + TX_PAGE_SIZE;
-
-        items.forEach((li, idx) => {
-            if (idx >= start && idx < end) {
-                li.style.display = 'block';
-            } else {
-                li.style.display = 'none';
-            }
-        });
-
-        if (totalPages > 1) {
-            pager.style.display = 'flex';
-        } else {
-            pager.style.display = 'none';
-        }
-
-        const isEn = "{{ session.get('lang','ar') }}" === "en";
-        if (isEn) {
-            label.textContent = "Page " + txPage;
-        } else {
-            label.textContent = "الصفحة " + txPage;
-        }
-
-        prevBtn.disabled = (txPage <= 1);
-        nextBtn.disabled = (txPage >= totalPages);
+    const total = items.length;
+    if (!total) {
+      if (pager) pager.style.display = 'none';
+      return;
     }
 
-    function txNext() {
-        txPage++;
+    const totalPages = Math.ceil(total / TX_PAGE_SIZE);
+    if (txPage > totalPages) txPage = totalPages;
+    if (txPage < 1) txPage = 1;
+
+    const start = (txPage - 1) * TX_PAGE_SIZE;
+    const end = start + TX_PAGE_SIZE;
+
+    items.forEach((li, idx) => {
+      li.style.display = (idx >= start && idx < end) ? 'block' : 'none';
+    });
+
+    pager.style.display = (totalPages > 1) ? 'flex' : 'none';
+
+    const isEn = "{{ session.get('lang','ar') }}" === "en";
+    label.textContent = isEn ? ("Page " + txPage) : ("الصفحة " + txPage);
+
+    prevBtn.disabled = (txPage <= 1);
+    nextBtn.disabled = (txPage >= totalPages);
+  }
+
+  function txNext(){ txPage++; renderTxPage(); }
+  function txPrev(){ txPage--; renderTxPage(); }
+
+  function toggleTx() {
+    const el = document.getElementById('tx_list');
+    if (el.style.display === 'none' || !el.style.display) {
+      el.style.display = 'block';
+      if (!txInitialized) {
+        txInitialized = true;
         renderTxPage();
+      }
+    } else {
+      el.style.display = 'none';
     }
+  }
 
-    function txPrev() {
-        txPage--;
-        renderTxPage();
+  // ========= محول العملات =========
+  async function convertCurrency() {
+    const amount = parseFloat(document.getElementById('convert_amount').value);
+    const from = document.getElementById('convert_from').value;
+    const to = document.getElementById('convert_to').value;
+    const resultElem = document.getElementById('convert_result');
+
+    {% if session.get('lang') == 'en' %}
+    const msgInvalidAmount = "Please enter a valid amount.";
+    const msgSameCurrency  = "Please select different currencies.";
+    const msgConverting    = "Converting...";
+    const msgConverted     = "Converted amount:";
+    const msgRate          = "Exchange rate:";
+    const msgError         = "Error:";
+    const msgErrorFetch    = "Error while converting currencies.";
+    {% else %}
+    const msgInvalidAmount = "يرجى إدخال مبلغ صحيح.";
+    const msgSameCurrency  = "يرجى اختيار عملات مختلفة.";
+    const msgConverting    = "جاري التحويل...";
+    const msgConverted     = "المبلغ بعد التحويل:";
+    const msgRate          = "سعر الصرف:";
+    const msgError         = "خطأ:";
+    const msgErrorFetch    = "حدث خطأ أثناء تحويل العملات.";
+    {% endif %}
+
+    if (!amount || amount <= 0) { resultElem.textContent = msgInvalidAmount; return; }
+    if (from === to) { resultElem.textContent = msgSameCurrency; return; }
+
+    resultElem.textContent = msgConverting;
+
+    try {
+      const response = await fetch('/convert_currency', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ amount, from, to })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        resultElem.textContent =
+          msgConverted + ' ' + data.converted_amount + ' ' + to +
+          '\n' + msgRate + ' 1 ' + from + ' = ' + data.rate + ' ' + to;
+
+        if (data.balances) {
+          Object.entries(data.balances).forEach(([cur, val]) => {
+            const el = document.querySelector(`.balance-amount[data-currency="${cur}"]`);
+            if (el) el.textContent = Number(val).toFixed(2);
+          });
+        }
+      } else {
+        resultElem.textContent = msgError + ' ' + (data.message || '');
+      }
+    } catch (err) {
+      console.error(err);
+      resultElem.textContent = msgErrorFetch;
     }
+  }
 
-    function toggleTx() {
-        const el = document.getElementById('tx_list');
-        if (el.style.display === 'none' || !el.style.display) {
-            el.style.display = 'block';
-            if (!txInitialized) {
-                txInitialized = true;
-                renderTxPage();
-            }
-        } else {
-            el.style.display = 'none';
+  // ========= Rewards Modal =========
+  function openReward(){
+    document.getElementById('rewardModal').style.display = 'flex';
+  }
+  function closeReward(){
+    document.getElementById('rewardModal').style.display = 'none';
+  }
+
+  async function activateReward(){
+    try{
+      const res = await fetch('/activate_reward', { method: 'POST' });
+      const data = await res.json();
+
+      if(data.success){
+        const usdEl = document.querySelector('.balance-amount[data-currency="USD"]');
+        // ✅ استخدم new_usd_balance أو new_usd حسب ما يرجعه الراوت
+        if(usdEl && data.new_usd_balance !== undefined){
+          usdEl.textContent = Number(data.new_usd_balance).toFixed(2);
+        } else if(usdEl && data.new_usd !== undefined){
+          usdEl.textContent = Number(data.new_usd).toFixed(2);
         }
+        alert(data.message || '✅ Done');
+        closeReward();
+      }else{
+        alert(data.message || '❌ Failed');
+      }
+    }catch(e){
+      alert('{% if session.get("lang")=="en" %}Activation error{% else %}حدث خطأ أثناء التفعيل{% endif %}');
+      console.error(e);
     }
-
-    // ========= محول العملات =========
-    async function convertCurrency() {
-        const amount = parseFloat(document.getElementById('convert_amount').value);
-        const from = document.getElementById('convert_from').value;
-        const to = document.getElementById('convert_to').value;
-        const resultElem = document.getElementById('convert_result');
-
-        {% if session.get('lang') == 'en' %}
-        const msgInvalidAmount = "Please enter a valid amount.";
-        const msgSameCurrency  = "Please select different currencies.";
-        const msgConverting    = "Converting...";
-        const msgConverted     = "Converted amount:";
-        const msgRate          = "Exchange rate:";
-        const msgError         = "Error:";
-        const msgErrorFetch    = "Error while converting currencies.";
-        {% else %}
-        const msgInvalidAmount = "يرجى إدخال مبلغ صحيح.";
-        const msgSameCurrency  = "يرجى اختيار عملات مختلفة.";
-        const msgConverting    = "جاري التحويل...";
-        const msgConverted     = "المبلغ بعد التحويل:";
-        const msgRate          = "سعر الصرف:";
-        const msgError         = "خطأ:";
-        const msgErrorFetch    = "حدث خطأ أثناء تحويل العملات.";
-        {% endif %}
-
-        if (!amount || amount <= 0) {
-            resultElem.textContent = msgInvalidAmount;
-            return;
-        }
-        if (from === to) {
-            resultElem.textContent = msgSameCurrency;
-            return;
-        }
-
-        resultElem.textContent = msgConverting;
-
-        try {
-            const response = await fetch('/convert_currency', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ amount, from, to })
-            });
-
-            const data = await response.json();
-
-            if (data.success) {
-                resultElem.textContent =
-                    msgConverted + ' ' + data.converted_amount + ' ' + to +
-                    '\n' + msgRate + ' 1 ' + from + ' = ' + data.rate + ' ' + to;
-
-                if (data.balances) {
-                    Object.entries(data.balances).forEach(([cur, val]) => {
-                        const el = document.querySelector(
-                            `.balance-amount[data-currency="${cur}"]`
-                        );
-                        if (el) {
-                            el.textContent = Number(val).toFixed(2);
-                        }
-                    });
-                }
-            } else {
-                resultElem.textContent = msgError + ' ' + (data.message || '');
-            }
-        } catch (err) {
-            console.error(err);
-            resultElem.textContent = msgErrorFetch;
-        }
-    }
+  }
 </script>
 
 </body>

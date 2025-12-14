@@ -24,6 +24,10 @@
   --topbar-link: #93c5fd;
   --topbar-link-hover: #bfdbfe;
 
+  /* ✅ ألوان أزرار الهاتف (مثل الصورة) */
+  --pill: #6366f1;         /* Indigo/Purple */
+  --pill-weak: rgba(99,102,241,.16);
+
   --radius: 14px;
   --radius-sm: 10px;
   --container: 1000px;
@@ -45,6 +49,9 @@ body.theme-dark{
 
   --primary: #93c5fd;
   --primary-2: #60a5fa;
+
+  --pill: #8b5cf6;
+  --pill-weak: rgba(139,92,246,.18);
 }
 
 /* ==============================
@@ -186,40 +193,155 @@ p, li{
   color: color-mix(in srgb, var(--text) 82%, transparent);
 }
 
+/* ==============================
+   Dashboard: Balances grid
+   ============================== */
+
+/* الافتراضي (موبايل): خليها 2 أعمدة تملأ العرض */
+.balance-grid{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.balance-card{
+  text-align: center;
+}
+
+/* ✅ على الحاسوب: قرّب العمودين من بعض */
+@media (min-width: 768px){
+  .balance-grid{
+    grid-template-columns: repeat(2, minmax(170px, 220px));
+    justify-content: center;
+    column-gap: 24px;
+    row-gap: 14px;
+  }
+}
+
+/* If odd count, last one spans full width and centers */
+.balance-grid .balance-card:last-child:nth-child(odd){
+  grid-column: 1 / -1;
+  width: min(340px, 100%);
+  justify-self: center;
+}
+
+/* container for Pay100 button */
+.auto-100-wrap{
+  display: flex !important;
+  width: 100% !important;
+  margin: 10px 0 12px !important;     /* ✅ تباعد فوق/تحت الزر */
+}
+
+/* Pay 100 button */
+.btn-pay100{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: #10b981;
+  color: #fff;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 14px;
+
+  margin-left: auto !important;
+  margin-right: 0 !important;
+}
+
+/* ✅ تباعد بسيط بين الزر والفورم الذي بعده */
+.auto-100-wrap + form{
+  margin-top: 6px !important;
+}
+
+@media (max-width: 640px){
+  .btn-pay100{
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+}
+
 #convert_result{ white-space: pre-line; }
+
 /* ==============================
    ✅ Topbar / Header (Global)
-   هدفنا: شريط صغير + أزرار مرتبة في الهاتف (زرّين في السطر)
+   - إصلاح قص/اختفاء محتوى الأزرار
+   - الهاتف: أزرار Pill مثل الصورة
    ============================== */
 header, .topbar{
   background: var(--topbar-bg);
   color: #fff;
   padding: 10px 12px;
   display:flex;
-  align-items:center;
+  align-items:flex-start;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;                 /* مهم */
 }
 
-/* الروابط داخل الشريط */
+/* روابط الشريط */
 header a, .topbar a{
   color: var(--topbar-link);
   text-decoration:none;
+  font-size: 14px;
+  line-height: 1.2;
 }
 
-/* مجموعة الروابط: خليه flex بس ما يوسّع كثير */
-header > div:last-child,
-.topbar > div:last-child{
+/* ==============================
+   Left block (Language + Welcome)
+   ============================== */
+.topbar-left{
+  display:flex;
+  flex-direction: column;
+  align-items: flex-end;           /* RTL */
+  gap: 2px;
+  line-height: 1.1;
+  flex: 0 0 auto;
+}
+
+[dir="ltr"] .topbar-left{ align-items: flex-start; }
+
+.topbar-left .lang-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06);
+  color: var(--topbar-link);
+  text-decoration:none;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.topbar-left .lang-btn:hover{
+  background: rgba(255,255,255,0.10);
+  color: var(--topbar-link-hover);
+  text-decoration:none;
+}
+
+.topbar-left .welcome{
+  margin:0;
+  white-space: nowrap;
+}
+
+/* ==============================
+   Right block (Buttons)
+   ============================== */
+.topbar .topbar-links{
   display:flex;
   align-items:center;
   flex-wrap:wrap;
   gap: 6px;
   justify-content:flex-end;
+  flex: 1 1 340px;
+  min-width: 260px;
 }
 
-/* شكل “زر رابط” داخل الشريط */
-header > div:last-child a,
-.topbar > div:last-child a{
+.topbar .topbar-links a{
   display:inline-flex;
   align-items:center;
   justify-content:center;
@@ -230,46 +352,167 @@ header > div:last-child a,
   background: rgba(255,255,255,0.06);
   white-space: nowrap;
   line-height: 1.1;
+  overflow: visible;
 }
-header > div:last-child a:hover,
-.topbar > div:last-child a:hover{
+
+.topbar .topbar-links a:hover{
   background: rgba(255,255,255,0.10);
   text-decoration:none;
   color: var(--topbar-link-hover);
 }
 
-/* على الهاتف: زرّين في كل سطر (Grid) + ارتفاع صغير */
+/* إصلاح شائع للـ flex */
+.topbar .topbar-links,
+.topbar .topbar-links a{
+  min-width: 0;
+}
+
+/* ==============================
+   ✅ Mobile layout (Pill buttons - شبه ملتصق فعلياً + تقليل السواد بين الأزرار)
+   ============================== */
 @media (max-width: 640px){
+
   header, .topbar{
-    padding: 8px 10px;
+    padding: 4px 8px !important;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px !important;
   }
 
-  /* نخلي عمود الترحيب لوحده فوق */
-  header > div:first-child,
-  .topbar > div:first-child{
+  .topbar-left{
     width:100%;
-    font-size: 13px;
-    opacity: .95;
+    align-items:flex-end;
+    gap: 0px !important;
+    line-height: 1 !important;
   }
+  [dir="ltr"] .topbar-left{ align-items:flex-start; }
 
-  /* الروابط Grid بعمودين */
-  header > div:last-child,
-  .topbar > div:last-child{
+  .topbar-left .welcome{ margin:0 !important; line-height:1 !important; }
+  .topbar-left .lang-btn{ padding: 3px 8px !important; line-height:1 !important; }
+
+  /* Grid: زرّين في كل سطر (ملتصق عمودياً) */
+  .topbar .topbar-links{
     width:100%;
     display:grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    justify-content: stretch;
+
+    column-gap: 8px !important;
+    row-gap: 0px !important;            /* ✅ التصاق فعلي */
+
+    padding: 0 !important;
+    margin: 0 !important;
+
+    align-content: start;
+    grid-auto-rows: min-content;
   }
 
-  header > div:last-child a,
-  .topbar > div:last-child a{
+  /* الزر نفسه */
+  .topbar .topbar-links a{
     width:100%;
-    padding: 8px 10px;
-    font-size: 13px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+
+    padding: 6px 10px !important;       /* أقل */
+    min-height: 32px !important;        /* أقل ارتفاع ممكن عملياً */
+    line-height: 1 !important;
+
+    font-size: 13px !important;
+    font-weight: 800;
+    border-radius: 999px;
+
+    /* ✅ بدل الشفافية التامة: خلفية خفيفة تقلل “السواد” بين الأزرار */
+    background: rgba(255,255,255,0.06) !important;
+
+    border: 2px solid color-mix(in srgb, var(--pill) 75%, #fff0) !important;
+    color: var(--pill) !important;
+
+    white-space: normal;
+    text-align: center;
+
+    margin: 0 !important;
+  }
+
+  .topbar .topbar-links a:hover{
+    background: rgba(255,255,255,0.10) !important;
+    text-decoration:none;
+  }
+
+  .topbar .topbar-links a.primary{
+    background: var(--pill) !important;
+    border-color: var(--pill) !important;
+    color: #fff !important;
+  }
+
+  /* يمنع أي عناصر داخلية ترفع الارتفاع */
+  .topbar .topbar-links *{
+    margin:0 !important;
+    line-height:1 !important;
   }
 }
+@media (max-width: 640px){
 
+  /* ✅ خلي الشريط يلف على قد المحتوى */
+  .topbar{
+    height: auto !important;
+    min-height: 0 !important;
+    padding-bottom: 4px !important;  /* أقل مساحة تحت */
+    align-content: flex-start;
+  }
+
+  /* ✅ أهم سطرين: لا تخلي الروابط تتمدد */
+  .topbar .topbar-links{
+    flex: 0 0 auto !important;   /* بدل 1 1 ... */
+    min-width: 0 !important;
+  }
+
+  /* ✅ امنع أي حجز مساحة تحت الشبكة */
+  .topbar .topbar-links{
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  /* ✅ لو كان فيه عناصر ثانية تسبب تمدد */
+  .topbar-left{
+    flex: 0 0 auto !important;
+  }
+}
+@media (max-width: 640px){
+
+  /* ✅ مسافة مريحة بين "مرحباً" والأزرار */
+  .topbar{
+    gap: 12px !important;           /* كان صغير جداً */
+  }
+
+  /* أو (الأدق) خلي المسافة فقط فوق الأزرار */
+  .topbar .topbar-links{
+    margin-top: 10px !important;    /* عدّلها 8~14 حسب الذوق */
+  }
+}
+@media (max-width: 640px){
+
+  /* ✅ امتداد ناعم (تدرّج) أسفل الشريط في الهاتف فقط */
+  .topbar{
+    padding-bottom: 14px; /* يخلق مساحة للتدرّج */
+    position: relative;
+  }
+
+  .topbar::after{
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -14px;
+    height: 14px;
+    background: linear-gradient(to bottom, var(--topbar-bg), transparent);
+    pointer-events: none;
+  }
+
+  /* ✅ امتداد بسيط تحت الأزرار نفسها */
+  .topbar .topbar-links{
+    padding-bottom: 4px !important;
+  }
+}
 /* ==============================
    Tables
    ============================== */
@@ -344,7 +587,6 @@ body.theme-dark .status-badge{
 
 /* ==============================
    ✅ Auth Pages (login/register/forgot/reset)
-   نحافظ على نفس شكلهم، مع ريسبونسف محترم
    ============================== */
 .wrapper{
   position:relative;
@@ -404,9 +646,7 @@ body.theme-dark .status-badge{
   text-decoration:none;
   font-size:13px;
 }
-/* Position language switch based on current language */
-.lang-switch.lang-ar { right: 16px; left: auto; }
-.lang-switch.lang-en { left: 16px; right: auto; }
+
 /* phone row */
 .phone-row{ display:flex; gap:6px; }
 .phone-row .country-select{ flex:0 0 42%; }
@@ -478,8 +718,6 @@ body.auth-page{
 /* ==============================
    Admin Overview: filters layout fix (mobile)
    ============================== */
-
-/* افتراضي: 5 أعمدة في الشاشات الواسعة */
 .filters{
   display:grid;
   grid-template-columns: repeat(5, 1fr);
@@ -487,19 +725,186 @@ body.auth-page{
   align-items:end;
 }
 
-/* تابلت: 3 أعمدة */
 @media (max-width: 900px){
   .filters{
     grid-template-columns: repeat(3, 1fr);
   }
 }
 
-/* هاتف: عمودين + زر التطبيق يأخذ عرض سطر كامل */
 @media (max-width: 640px){
   .filters{
     grid-template-columns: 1fr 1fr;
   }
   .filters > div:last-child{
     grid-column: 1 / -1;
+  }
+}
+
+/* ==============================
+   🔥 FIX: Topbar buttons text disappearing
+   ضع هذا المقطع في آخر ملف CSS (آخر شيء)
+   ============================== */
+
+.topbar .topbar-links a{
+  /* امنع أي CSS قديم يخفي النص */
+  font-size: 14px !important;
+  line-height: 1.2 !important;
+  color: var(--topbar-link) !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+
+  /* امنع قص المحتوى */
+  height: auto !important;
+  min-height: 38px !important;
+  overflow: visible !important;
+
+  /* امنع tricks مثل font-size:0 أو text-indent... */
+  text-indent: 0 !important;
+  letter-spacing: normal !important;
+}
+
+.topbar .topbar-links a *{
+  font-size: inherit !important;
+  line-height: inherit !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* تأكد أن الحاوية لا تضغط العناصر */
+.topbar .topbar-links{
+  overflow: visible !important;
+  min-width: 0 !important;
+}
+
+/* الهاتف: نفس ستايل الـ pill + لا تمنع التفاف النص */
+@media (max-width: 640px){
+  .topbar .topbar-links a{
+    white-space: normal !important;
+  }
+}
+
+/* 🔥 FIX: Topbar buttons text disappearing (put at end of file) */
+.topbar .topbar-links a{
+  font-size: 14px !important;
+  line-height: 1.2 !important;
+  color: var(--topbar-link) !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+
+  height: auto !important;
+  min-height: 38px !important;
+  overflow: visible !important;
+
+  text-indent: 0 !important;
+  letter-spacing: normal !important;
+}
+
+.topbar .topbar-links a *{
+  font-size: inherit !important;
+  line-height: inherit !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+.topbar .topbar-links{
+  overflow: visible !important;
+  min-width: 0 !important;
+}
+
+@media (max-width: 640px){
+  .topbar .topbar-links a{
+    white-space: normal !important;
+  }
+}
+
+/* DEBUG FORCE (put at very end) */
+.topbar .topbar-links a{
+  color: #ffffff !important;
+  background: rgba(255,255,255,0.12) !important;
+  border: 1px solid rgba(255,255,255,0.25) !important;
+
+  font-size: 14px !important;
+  line-height: 1.2 !important;
+  font-weight: 700 !important;
+
+  opacity: 1 !important;
+  visibility: visible !important;
+
+  height: auto !important;
+  min-height: 38px !important;
+  overflow: visible !important;
+
+  text-indent: 0 !important;
+  filter: none !important;
+  transform: none !important;
+}
+
+.topbar .topbar-links a *{
+  color: inherit !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+/* ==============================
+   ✅ Link Telegram page — Desktop should look like Desktop
+   ============================== */
+
+/* اجعل الصفحة تأخذ عرض مناسب على الحاسوب */
+body.page-link-telegram .wrap{
+  width: 100%;
+  max-width: 1100px;
+  margin: 22px auto;
+  padding: 0 16px 28px;
+}
+
+/* الكارد الرئيسي يتمدد بدل ما يبقى ضيق */
+body.page-link-telegram .wrap > .card{
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 18px;
+}
+
+/* الهيدر (العنوان + زر الرجوع) */
+body.page-link-telegram .top{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+body.page-link-telegram .top .title{
+  margin: 0;
+}
+
+/* ✅ الديسكتوب: خلي .row عمودين (بدل شكل الموبايل) */
+@media (min-width: 900px){
+  body.page-link-telegram .row{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    align-items: start;
+    margin-top: 12px;
+  }
+
+  body.page-link-telegram .row .box{
+    width: 100%;
+  }
+}
+
+/* ✅ التابلت/الموبايل: عمود واحد */
+@media (max-width: 899px){
+  body.page-link-telegram .row{
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-top: 12px;
+  }
+}
+
+/* زر إضافة 10$ خليه ممتد في الديسكتوب */
+@media (min-width: 900px){
+  body.page-link-telegram form[action*="transfer_to_bot_10"] button{
+    width: auto;
   }
 }
