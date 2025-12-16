@@ -72,7 +72,7 @@
     </a>
 
   </div>
-</div> <!-- ✅ مهم: إغلاق topbar كان ناقص -->
+</div>
 
 <div class="container">
 
@@ -87,7 +87,7 @@
     {% endif %}
   {% endwith %}
 
-  <!-- ✅ الأرصدة (مكان العملات) -->
+  <!-- ✅ الأرصدة -->
   <div class="card">
     <h2>
       {% if session.get('lang') == 'en' %}
@@ -279,7 +279,7 @@ Payout info (e.g. bank / wallet / agent name)
         {% endfor %}
       </select>
 
-      <button type="submit">
+      <button id="convert_btn" type="submit">
         {% if session.get('lang') == 'en' %}
           Convert
         {% else %}
@@ -288,7 +288,6 @@ Payout info (e.g. bank / wallet / agent name)
       </button>
     </form>
 
-    <!-- (اختياري) إذا عندك عنصر نتيجة التحويل -->
     <div id="convert_result" class="note"></div>
   </div>
 
@@ -352,7 +351,7 @@ Payout info (e.g. bank / wallet / agent name)
     </div>
   </div>
 
-</div> <!-- نهاية container -->
+</div>
 
 <!-- مودال المكافأة -->
 <div id="rewardModal" class="modal" style="display:none;">
@@ -448,10 +447,10 @@ Payout info (e.g. bank / wallet / agent name)
 
   // ========= محول العملات =========
   async function convertCurrency() {
-    const amount = parseFloat(document.getElementById('convert_amount').value);
-    const from = document.getElementById('convert_from').value;
-    const to = document.getElementById('convert_to').value;
-    const resultElem = document.getElementById('convert_result');
+    const amount = parseFloat(document.getElementById("convert_amount").value);
+    const from = document.getElementById("convert_from").value;
+    const to = document.getElementById("convert_to").value;
+    const resultElem = document.getElementById("convert_result");
 
     {% if session.get('lang') == 'en' %}
     const msgInvalidAmount = "Please enter a valid amount.";
@@ -471,33 +470,58 @@ Payout info (e.g. bank / wallet / agent name)
     const msgErrorFetch    = "حدث خطأ أثناء تحويل العملات.";
     {% endif %}
 
-    if (!amount || amount <= 0) { resultElem.textContent = msgInvalidAmount; return; }
-    if (from === to) { resultElem.textContent = msgSameCurrency; return; }
+    if (!amount || amount <= 0) {
+      resultElem.textContent = msgInvalidAmount;
+      return;
+    }
+
+    if (from === to) {
+      resultElem.textContent = msgSameCurrency;
+      return;
+    }
 
     resultElem.textContent = msgConverting;
 
     try {
-      const response = await fetch('/convert_currency', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+      const response = await fetch("/convert_currency", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ amount, from, to })
       });
 
-      const data = await response.json();
+      const text = await response.text();
+      let data = null;
+
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        console.error("Non-JSON response:", text);
+        resultElem.textContent = msgErrorFetch;
+        return;
+      }
+
+      if (!response.ok) {
+        resultElem.textContent =
+          msgError + " " + (data.message || ("HTTP " + response.status));
+        return;
+      }
 
       if (data.success) {
         resultElem.textContent =
-          msgConverted + ' ' + data.converted_amount + ' ' + to +
-          '\n' + msgRate + ' 1 ' + from + ' = ' + data.rate + ' ' + to;
+          msgConverted + " " + data.converted_amount + " " + to +
+          "\n" + msgRate + " 1 " + from + " = " + data.rate + " " + to;
 
         if (data.balances) {
           Object.entries(data.balances).forEach(([cur, val]) => {
-            const el = document.querySelector(`.balance-amount[data-currency="${cur}"]`);
+            const el = document.querySelector(
+              `.balance-amount[data-currency="${cur}"]`
+            );
             if (el) el.textContent = Number(val).toFixed(2);
           });
         }
       } else {
-        resultElem.textContent = msgError + ' ' + (data.message || '');
+        resultElem.textContent = msgError + " " + (data.message || "");
       }
     } catch (err) {
       console.error(err);
@@ -506,37 +530,36 @@ Payout info (e.g. bank / wallet / agent name)
   }
 
   // ========= Rewards Modal =========
-  function openReward(){
-    document.getElementById('rewardModal').style.display = 'flex';
-  }
-  function closeReward(){
-    document.getElementById('rewardModal').style.display = 'none';
+  function openReward() {
+    document.getElementById("rewardModal").style.display = "flex";
   }
 
-  async function activateReward(){
-    try{
-      const res = await fetch('/activate_reward', { method: 'POST' });
+  function closeReward() {
+    document.getElementById("rewardModal").style.display = "none";
+  }
+
+  async function activateReward() {
+    try {
+      const res = await fetch("/activate_reward", { method: "POST", credentials: "same-origin" });
       const data = await res.json();
 
-      if(data.success){
+      if (data.success) {
         const usdEl = document.querySelector('.balance-amount[data-currency="USD"]');
-        // ✅ استخدم new_usd_balance أو new_usd حسب ما يرجعه الراوت
-        if(usdEl && data.new_usd_balance !== undefined){
+        if (usdEl && data.new_usd_balance !== undefined) {
           usdEl.textContent = Number(data.new_usd_balance).toFixed(2);
-        } else if(usdEl && data.new_usd !== undefined){
+        } else if (usdEl && data.new_usd !== undefined) {
           usdEl.textContent = Number(data.new_usd).toFixed(2);
         }
-        alert(data.message || '✅ Done');
+        alert(data.message || "✅ Done");
         closeReward();
-      }else{
-        alert(data.message || '❌ Failed');
+      } else {
+        alert(data.message || "❌ Failed");
       }
-    }catch(e){
+    } catch (e) {
       alert('{% if session.get("lang")=="en" %}Activation error{% else %}حدث خطأ أثناء التفعيل{% endif %}');
       console.error(e);
     }
   }
 </script>
-
 </body>
 </html>

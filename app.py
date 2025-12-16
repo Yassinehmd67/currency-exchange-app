@@ -6,7 +6,7 @@ import sqlite3
 import logging
 import hashlib
 import requests  # Telegram Bot API
-from datetime import timedelta
+from datetime import datetime, timezone, timedelta
 from flask import jsonify, session
 from decimal import Decimal, ROUND_DOWN
 from flask import jsonify, session
@@ -1483,7 +1483,7 @@ def attach_main_menu_button(kb=None):
     )
     return kb    
 # تهيئة قاعدة البيانات عند تحميل الملف
-    init_db()
+init_db()
 # ==============================
 # المسارات الأساسية (المستخدم)
 # ==============================
@@ -1565,6 +1565,7 @@ def login():
 
         # كل شيء تمام → تسجيل الدخول
         session["username"] = user["username"]
+        session["user_id"] = user["id"]      # ✅ جديد
         session["is_admin"] = bool(user.get("is_admin", False))
         return redirect(url_for("index"))
 
@@ -1849,22 +1850,22 @@ def convert_currency_route():
     if "username" not in session:
         return jsonify({"success": False, "message": "يجب تسجيل الدخول أولاً"}), 401
 
-    data = request.get_json()
-    if not data:
-        return jsonify({"success": False, "message": "بيانات غير صحيحة"}), 400
+    data = request.get_json(silent=True) or {}
+    from_currency = (data.get("from") or "").strip().upper()
+    to_currency = (data.get("to") or "").strip().upper()
+    amount_raw = data.get("amount")
 
-    from_currency = data.get("from")
-    to_currency = data.get("to")
-    amount_str = str(data.get("amount"))
-
-    if not from_currency or not to_currency or not amount_str:
+    if not from_currency or not to_currency or amount_raw in (None, ""):
         return jsonify({"success": False, "message": "جميع الحقول مطلوبة"}), 400
+
+    if from_currency == to_currency:
+        return jsonify({"success": False, "message": "يرجى اختيار عملتين مختلفتين"}), 400
 
     if from_currency not in CURRENCIES or to_currency not in CURRENCIES:
         return jsonify({"success": False, "message": "عملة غير مدعومة"}), 400
 
     try:
-        amount = Decimal(amount_str)
+        amount = Decimal(str(amount_raw))
         if amount <= 0:
             return jsonify({"success": False, "message": "المبلغ يجب أن يكون أكبر من صفر"}), 400
     except Exception:
@@ -1876,43 +1877,51 @@ def convert_currency_route():
         session.clear()
         return jsonify({"success": False, "message": "المستخدم غير موجود"}), 400
 
-    current_from_balance = user["balance"].get(from_currency, 0.0)
-    if current_from_balance < float(amount):
+    current_from_balance = Decimal(str(user["balance"].get(from_currency, 0.0)))
+    if current_from_balance < amount:
         return jsonify({"success": False, "message": f"الرصيد غير كافٍ في {from_currency}"}), 400
 
     try:
-        converted_raw = convert_currency(amount, from_currency, to_currency)
-        converted_dec = Decimal(str(converted_raw)).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
-        rate_dec = (converted_dec / amount).quantize(Decimal("0.0001"))
+        # مهم: كثير من مزودات التحويل تتعامل أفضل مع float
+        converted_raw = convert_currency(float(amount), from_currency, to_currency)
 
+        converted_dec = Decimal(str(converted_raw)).quantize(
+            Decimal("0.01"), rounding=ROUND_DOWN
+        )
+        rate_dec = (converted_dec / amount).quantize(
+            Decimal("0.0001"), rounding=ROUND_DOWN
+        )
+
+        # تحديث الرصيد في DB
         change_balance(user["id"], from_currency, -float(amount))
         change_balance(user["id"], to_currency, float(converted_dec))
 
         details = f"{amount} {from_currency} → {converted_dec} {to_currency}"
         log_transaction(user["id"], "Currency Conversion", float(amount), from_currency, details)
 
-        updated_user = get_user(username)
-        balances = updated_user["balance"] if updated_user and "balance" in updated_user else {}
+        # ✅ لا نعمل get_user() مرة أخرى (قد يسبب 500 بعد نجاح التعديل)
+        balances = dict(user["balance"])
+        balances[from_currency] = float(Decimal(str(balances.get(from_currency, 0.0))) - amount)
+        balances[to_currency] = float(Decimal(str(balances.get(to_currency, 0.0))) + converted_dec)
 
         return jsonify(
             {
                 "success": True,
-                "converted_amount": f"{converted_dec}",
-                "rate": f"{rate_dec:.4f}",
+                "converted_amount": str(converted_dec),
+                "rate": f"{rate_dec}",
                 "balances": balances,
             }
         )
 
     except RuntimeError as e:
-        logging.error(f"Currency API error: {e}")
+        logging.exception("Currency API error: %s", e)
         return jsonify(
             {"success": False, "message": "تعذر جلب سعر الصرف من مزوّد الأسعار الخارجي، يرجى المحاولة لاحقاً."}
         ), 502
 
     except Exception as e:
-        logging.error(f"Currency conversion error: {e}")
+        logging.exception("Currency conversion error: %s", e)
         return jsonify({"success": False, "message": "خطأ أثناء تحويل العملات"}), 500
-
 
 # ==============================
 # Binance Pay Top-up (UID + Proof)
