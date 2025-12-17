@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="{{ session.get('lang','ar') }}" dir="{{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v=1) }}">
+  <title>{% if session.get('lang') == 'en' %}Rewards{% else %}المكافأة{% endif %}</title>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <a class="lang-btn" href="{{ url_for('toggle_language') }}">🌐</a>
+    <div class="welcome">
+      {% if session.get('lang', 'ar') == 'en' %}
+        👋 Welcome, {{ username }}
+      {% else %}
+        👋 مرحباً، {{ username }}
+      {% endif %}
+    </div>
+  </div>
+  <div class="topbar-links">
+    <a href="{{ url_for('index') }}">🏠 {% if session.get('lang')=='en' %}Dashboard{% else %}لوحة التحكم{% endif %}</a>
+    <a href="{{ url_for('logout') }}">🔓 {% if session.get('lang')=='en' %}Logout{% else %}تسجيل الخروج{% endif %}</a>
+  </div>
+</div>
+
+<div class="container">
+  <div class="card">
+    <h2>
+      🎁 {% if session.get('lang') == 'en' %}Rewards{% else %}المكافأة{% endif %}
+    </h2>
+
+    <p class="note" style="white-space:pre-line;">
+      {% if session.get('lang') == 'en' %}
+        Claim {{ reward_amount }} USD every {{ cooldown_hours }} hours.
+      {% else %}
+        يمكنك الحصول على {{ reward_amount }}$ كل {{ cooldown_hours }} ساعة.
+      {% endif %}
+    </p>
+
+    <div class="note" id="reward_msg" style="white-space:pre-line;"></div>
+
+    <button class="btn" id="reward_btn" type="button">
+      {% if session.get('lang') == 'en' %}Activate{% else %}تفعيل{% endif %}
+    </button>
+  </div>
+
+  <!-- (اختياري) عرض رصيد USD الحالي إن أردت -->
+  {% if user and user.balance %}
+  <div class="card">
+    <h3>💰 USD</h3>
+    <div class="balance-amount" data-currency="USD">
+      {{ "%.2f"|format(user.balance.get("USD", 0)) }}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+  function _formatRemaining(seconds) {
+    const s = Math.max(0, Number(seconds || 0));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    return `${h}h ${m}m ${r}s`;
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const btn = document.getElementById("reward_btn");
+    const msg = document.getElementById("reward_msg");
+
+    btn.addEventListener("click", async () => {
+      try {
+        btn.disabled = true;
+        msg.textContent = "{% if session.get('lang')=='en' %}Activating...{% else %}جاري التفعيل...{% endif %}";
+
+        const res = await fetch("/activate_reward", { method: "POST", credentials: "same-origin" });
+        const data = await res.json().catch(() => null);
+
+        if (!data) {
+          msg.textContent = "{% if session.get('lang')=='en' %}Invalid server response.{% else %}رد غير صالح من الخادم.{% endif %}";
+          return;
+        }
+
+        if (res.ok && data.success) {
+          msg.textContent = data.message || "✅ Done";
+
+          // تحديث USD في الصفحة إن وجد
+          const usdEl = document.querySelector('.balance-amount[data-currency="USD"]');
+          const newUsdVal = (data.new_usd_balance !== undefined) ? data.new_usd_balance : data.new_usd;
+          if (usdEl && newUsdVal !== undefined) {
+            usdEl.textContent = Number(newUsdVal).toFixed(2);
+          }
+          return;
+        }
+
+        let errorText = data.message || "❌ Failed";
+        if (data.remaining_seconds !== undefined) {
+          errorText += "\n⏳ المتبقي: " + _formatRemaining(data.remaining_seconds);
+        }
+        msg.textContent = errorText;
+
+      } catch (e) {
+        console.error(e);
+        msg.textContent = "{% if session.get('lang')=='en' %}Activation error{% else %}حدث خطأ أثناء التفعيل{% endif %}";
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -58,6 +58,10 @@ BINANCE_UID = os.getenv("BINANCE_UID", "YOUR_BINANCE_UID_HERE")
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 USE_POSTGRES = bool(DATABASE_URL)
 
+REWARD_AMOUNT = float(os.getenv("REWARD_AMOUNT", "0.02"))
+COOLDOWN_HOURS = int(os.getenv("REWARD_COOLDOWN_HOURS", "12"))
+COOLDOWN = timedelta(hours=COOLDOWN_HOURS)
+
 # رابط الشحن الأوتوماتيكي 100 USDT
 BINANCE_AUTO_100_URL = os.getenv("BINANCE_AUTO_100_URL", "").strip()
 if not BINANCE_AUTO_100_URL:
@@ -269,7 +273,6 @@ def close_db(exc):
     if db is not None:
         db.close()
 
-
 def init_db():
     # ===== Postgres schema (Neon) =====
     if USE_POSTGRES:
@@ -299,12 +302,13 @@ def init_db():
             );
         """)
 
-        # ترقية جدول users لو كان قديماً
+        # ترقية جدول users لو كان قديماً (Postgres)
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_token TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_sent_at TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_sent_at TEXT;")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_reward_claim_at TIMESTAMPTZ;")
 
         # ---------- balances ----------
         cur.execute("""
@@ -393,14 +397,13 @@ def init_db():
             );
         """)
 
-        # ترقية telegram_users لو كانت قديمة
+        # ترقية telegram_users لو كانت قديمة (Postgres)
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS referral_credits_usd DOUBLE PRECISION DEFAULT 0;")
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS linked_at TEXT;")
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS bot_balance_usd DOUBLE PRECISION DEFAULT 0;")
 
         # ---------- telegram_link_codes ----------
-        # (نموذج واحد واضح بدون تكرار)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS telegram_link_codes (
                 id BIGSERIAL PRIMARY KEY,
@@ -414,7 +417,7 @@ def init_db():
             );
         """)
 
-        # ترقية telegram_link_codes لو كانت قديمة
+        # ترقية telegram_link_codes لو كانت قديمة (Postgres)
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code TEXT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code_hash TEXT;")
@@ -436,105 +439,205 @@ def init_db():
     # ==============================
     # SQLite upgrades (local file)
     # ==============================
-    if not USE_POSTGRES:
-        db = sqlite3.connect(DB_PATH)
-        db.row_factory = sqlite3.Row
-        cur = db.cursor()
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    cur = db.cursor()
 
-        # users: أعمدة التحقق من البريد + إعادة تعيين كلمة المرور
-        cols_users = {c[1] for c in cur.execute("PRAGMA table_info(users)").fetchall()} if cur.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='users';"
-        ).fetchone() else set()
+    # ---------- users (SQLite) ----------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT,
+            phone TEXT,
+            password_hash TEXT NOT NULL,
+            is_admin INTEGER DEFAULT 0,
+            email_verified INTEGER DEFAULT 0,
+            email_verify_token TEXT,
+            email_verify_sent_at TEXT,
+            password_reset_token TEXT,
+            password_reset_sent_at TEXT,
+            last_reward_claim_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
-        if cols_users:
-            if "email_verified" not in cols_users:
-                cur.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0")
-            if "email_verify_token" not in cols_users:
-                cur.execute("ALTER TABLE users ADD COLUMN email_verify_token TEXT")
-            if "email_verify_sent_at" not in cols_users:
-                cur.execute("ALTER TABLE users ADD COLUMN email_verify_sent_at TEXT")
+    # upgrades users (SQLite)
+    cols_users = {c[1] for c in cur.execute("PRAGMA table_info(users)").fetchall()}
+    if "email_verified" not in cols_users:
+        cur.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0")
+    if "email_verify_token" not in cols_users:
+        cur.execute("ALTER TABLE users ADD COLUMN email_verify_token TEXT")
+    if "email_verify_sent_at" not in cols_users:
+        cur.execute("ALTER TABLE users ADD COLUMN email_verify_sent_at TEXT")
+    if "password_reset_token" not in cols_users:
+        cur.execute("ALTER TABLE users ADD COLUMN password_reset_token TEXT")
+    if "password_reset_sent_at" not in cols_users:
+        cur.execute("ALTER TABLE users ADD COLUMN password_reset_sent_at TEXT")
+    if "last_reward_claim_at" not in cols_users:
+        cur.execute("ALTER TABLE users ADD COLUMN last_reward_claim_at TEXT")
 
-            if "password_reset_token" not in cols_users:
-                cur.execute("ALTER TABLE users ADD COLUMN password_reset_token TEXT")
-            if "password_reset_sent_at" not in cols_users:
-                cur.execute("ALTER TABLE users ADD COLUMN password_reset_sent_at TEXT")
+    # ---------- balances (SQLite) ----------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS balances (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            currency TEXT NOT NULL,
+            amount REAL NOT NULL DEFAULT 0,
+            UNIQUE(user_id, currency)
+        );
+    """)
 
-        # telegram_users: bot_balance_usd + referral_credits_usd + الربط
-        cols_tg = {c[1] for c in cur.execute("PRAGMA table_info(telegram_users)").fetchall()} if cur.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_users';"
-        ).fetchone() else set()
+    # ---------- transactions (SQLite) ----------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT,
+            details TEXT,
+            timestamp TEXT NOT NULL
+        );
+    """)
 
-        if cols_tg:
-            if "bot_balance_usd" not in cols_tg:
+    # ---------- pending_deposits (SQLite) ----------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pending_deposits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            fiat_currency TEXT NOT NULL,
+            pay_method TEXT,
+            status TEXT DEFAULT 'pending',
+            txid TEXT,
+            timestamp TEXT NOT NULL,
+            processed_by TEXT,
+            processed_at TEXT
+        );
+    """)
+
+    # upgrades pending_deposits (SQLite)
+    if cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_deposits';").fetchone():
+        cols_dep = {c[1] for c in cur.execute("PRAGMA table_info(pending_deposits)").fetchall()}
+        if "status" not in cols_dep:
+            cur.execute("ALTER TABLE pending_deposits ADD COLUMN status TEXT DEFAULT 'pending'")
+        if "processed_by" not in cols_dep:
+            cur.execute("ALTER TABLE pending_deposits ADD COLUMN processed_by TEXT")
+        if "processed_at" not in cols_dep:
+            cur.execute("ALTER TABLE pending_deposits ADD COLUMN processed_at TEXT")
+
+    # ---------- pending_withdrawals (SQLite) ----------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS pending_withdrawals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            currency TEXT NOT NULL,
+            payout_info TEXT,
+            status TEXT DEFAULT 'pending',
+            timestamp TEXT NOT NULL,
+            processed_by TEXT,
+            processed_at TEXT
+        );
+    """)
+
+    # upgrades pending_withdrawals (SQLite)
+    if cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_withdrawals';").fetchone():
+        cols_w = {c[1] for c in cur.execute("PRAGMA table_info(pending_withdrawals)").fetchall()}
+        if "status" not in cols_w:
+            cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN status TEXT DEFAULT 'pending'")
+        if "processed_by" not in cols_w:
+            cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_by TEXT")
+        if "processed_at" not in cols_w:
+            cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_at TEXT")
+
+    # ---------- notifications (SQLite) ----------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT,
+            type TEXT,
+            is_read INTEGER DEFAULT 0,
+            created_at TEXT,
+            ref_type TEXT,
+            ref_id INTEGER
+        );
+    """)
+
+    # upgrades notifications (SQLite)
+    if cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='notifications';").fetchone():
+        cols_not = {c[1] for c in cur.execute("PRAGMA table_info(notifications)").fetchall()}
+        if "body" not in cols_not:
+            cur.execute("ALTER TABLE notifications ADD COLUMN body TEXT")
+            if "message" in cols_not:
                 try:
-                    cur.execute("ALTER TABLE telegram_users ADD COLUMN bot_balance_usd REAL DEFAULT 0")
+                    cur.execute("UPDATE notifications SET body = message WHERE body IS NULL")
                 except Exception:
                     pass
-            if "referral_credits_usd" not in cols_tg:
-                cur.execute("ALTER TABLE telegram_users ADD COLUMN referral_credits_usd REAL DEFAULT 0")
-            if "platform_user_id" not in cols_tg:
-                cur.execute("ALTER TABLE telegram_users ADD COLUMN platform_user_id INTEGER")
-            if "linked_at" not in cols_tg:
-                cur.execute("ALTER TABLE telegram_users ADD COLUMN linked_at TEXT")
+        if "type" not in cols_not:
+            cur.execute("ALTER TABLE notifications ADD COLUMN type TEXT")
+        if "is_read" not in cols_not:
+            cur.execute("ALTER TABLE notifications ADD COLUMN is_read INTEGER DEFAULT 0")
+        if "created_at" not in cols_not:
+            cur.execute("ALTER TABLE notifications ADD COLUMN created_at TEXT")
+        if "ref_type" not in cols_not:
+            cur.execute("ALTER TABLE notifications ADD COLUMN ref_type TEXT")
+        if "ref_id" not in cols_not:
+            cur.execute("ALTER TABLE notifications ADD COLUMN ref_id INTEGER")
 
-        # pending_deposits upgrades
-        if cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_deposits';").fetchone():
-            cols_dep = {c[1] for c in cur.execute("PRAGMA table_info(pending_deposits)").fetchall()}
-            if "status" not in cols_dep:
-                cur.execute("ALTER TABLE pending_deposits ADD COLUMN status TEXT DEFAULT 'pending'")
-            if "processed_by" not in cols_dep:
-                cur.execute("ALTER TABLE pending_deposits ADD COLUMN processed_by TEXT")
-            if "processed_at" not in cols_dep:
-                cur.execute("ALTER TABLE pending_deposits ADD COLUMN processed_at TEXT")
+    # ---------- telegram_users (SQLite) ----------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_id INTEGER UNIQUE NOT NULL,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            referred_by_telegram_id INTEGER,
+            referral_credits_usd REAL DEFAULT 0,
+            platform_user_id INTEGER,
+            linked_at TEXT,
+            bot_balance_usd REAL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
 
-        # pending_withdrawals upgrades
-        if cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_withdrawals';").fetchone():
-            cols_w = {c[1] for c in cur.execute("PRAGMA table_info(pending_withdrawals)").fetchall()}
-            if "status" not in cols_w:
-                cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN status TEXT DEFAULT 'pending'")
-            if "processed_by" not in cols_w:
-                cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_by TEXT")
-            if "processed_at" not in cols_w:
-                cur.execute("ALTER TABLE pending_withdrawals ADD COLUMN processed_at TEXT")
+    # upgrades telegram_users (SQLite)
+    cols_tg = {c[1] for c in cur.execute("PRAGMA table_info(telegram_users)").fetchall()} if cur.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_users';"
+    ).fetchone() else set()
 
-        # notifications upgrades
-        if cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='notifications';").fetchone():
-            cols_not = {c[1] for c in cur.execute("PRAGMA table_info(notifications)").fetchall()}
+    if cols_tg:
+        if "bot_balance_usd" not in cols_tg:
+            try:
+                cur.execute("ALTER TABLE telegram_users ADD COLUMN bot_balance_usd REAL DEFAULT 0")
+            except Exception:
+                pass
+        if "referral_credits_usd" not in cols_tg:
+            cur.execute("ALTER TABLE telegram_users ADD COLUMN referral_credits_usd REAL DEFAULT 0")
+        if "platform_user_id" not in cols_tg:
+            cur.execute("ALTER TABLE telegram_users ADD COLUMN platform_user_id INTEGER")
+        if "linked_at" not in cols_tg:
+            cur.execute("ALTER TABLE telegram_users ADD COLUMN linked_at TEXT")
 
-            if "body" not in cols_not:
-                cur.execute("ALTER TABLE notifications ADD COLUMN body TEXT")
-                if "message" in cols_not:
-                    try:
-                        cur.execute("UPDATE notifications SET body = message WHERE body IS NULL")
-                    except Exception:
-                        pass
+    # ---------- telegram_link_codes (SQLite) ----------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_link_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform_user_id INTEGER NOT NULL,
+            code TEXT UNIQUE NOT NULL,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            used_by_telegram_id INTEGER
+        );
+    """)
 
-            if "type" not in cols_not:
-                cur.execute("ALTER TABLE notifications ADD COLUMN type TEXT")
-            if "is_read" not in cols_not:
-                cur.execute("ALTER TABLE notifications ADD COLUMN is_read INTEGER DEFAULT 0")
-            if "created_at" not in cols_not:
-                cur.execute("ALTER TABLE notifications ADD COLUMN created_at TEXT")
-            if "ref_type" not in cols_not:
-                cur.execute("ALTER TABLE notifications ADD COLUMN ref_type TEXT")
-            if "ref_id" not in cols_not:
-                cur.execute("ALTER TABLE notifications ADD COLUMN ref_id INTEGER")
-
-        # telegram_link_codes (SQLite)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS telegram_link_codes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                platform_user_id INTEGER NOT NULL,
-                code TEXT UNIQUE NOT NULL,
-                expires_at TEXT NOT NULL,
-                used_at TEXT,
-                used_by_telegram_id INTEGER
-            );
-        """)
-
-        db.commit()
-        db.close()
-        return
+    db.commit()
+    db.close()
+    return
 # ==============================
 # دوال مساعدة على مستوى المستخدمين
 # ==============================
@@ -2454,75 +2557,85 @@ def activate_reward():
     if not user_id:
         return jsonify(success=False, message="يجب تسجيل الدخول أولاً"), 401
 
-    if USE_POSTGRES:
-        db = psycopg2.connect(DATABASE_URL)
-        try:
-            with db:
-                with db.cursor() as cur:
-                    # اقفل صف المستخدم لمنع السباق
-                    cur.execute("""
-                        SELECT last_reward_claim_at, now()
-                        FROM users
-                        WHERE id = %s
-                        FOR UPDATE
-                    """, (user_id,))
-                    row = cur.fetchone()
-                    if not row:
-                        return jsonify(success=False, message="المستخدم غير موجود"), 404
+    db = get_db()
 
-                    last_claim, now = row
-
-                    if last_claim is not None and (now - last_claim) < COOLDOWN:
-                        remaining = COOLDOWN - (now - last_claim)
-                        return jsonify(
-                            success=False,
-                            message="لم يحن وقت المكافأة بعد",
-                            remaining_seconds=int(remaining.total_seconds())
-                        ), 429
-
-                    # حدّث وقت المكافأة
-                    cur.execute("""
-                        UPDATE users
-                        SET last_reward_claim_at = now()
-                        WHERE id = %s
-                    """, (user_id,))
-
-                    # أضف 0.02 إلى USD داخل balances (Upsert)
-                    cur.execute("""
-                        INSERT INTO balances (user_id, currency, amount)
-                        VALUES (%s, 'USD', %s)
-                        ON CONFLICT (user_id, currency)
-                        DO UPDATE SET amount = balances.amount + EXCLUDED.amount
-                        RETURNING amount
-                    """, (user_id, REWARD_AMOUNT))
-
-                    new_usd = cur.fetchone()[0]
-
-            return jsonify(success=True, message="✅ تم إضافة 0.02$ إلى رصيد USD", new_usd=float(new_usd))
-
-        finally:
-            db.close()
-
-    # ===== SQLite fallback =====
-    db = sqlite3.connect("database.db")
-    db.row_factory = sqlite3.Row
     try:
-        cur = db.cursor()
+        if USE_POSTGRES:
+            # نستخدم اتصال Postgres الحالي من get_db() (PGConnectionWrapper)
+            cur = db.cursor()
 
+            # اقفل صف المستخدم لمنع السباق
+            cur.execute("""
+                SELECT last_reward_claim_at
+                FROM users
+                WHERE id = %s
+                FOR UPDATE
+            """, (user_id,))
+            row = cur.fetchone()
+            if not row:
+                db.rollback()
+                return jsonify(success=False, message="المستخدم غير موجود"), 404
+
+            # RealDictCursor يرجع dict، وإلا tuple
+            last_claim = row["last_reward_claim_at"] if isinstance(row, dict) else row[0]
+            now = datetime.now(timezone.utc)
+
+            if last_claim is not None:
+                # last_claim من Postgres غالباً timezone-aware
+                delta = now - last_claim
+                if delta < COOLDOWN:
+                    remaining = COOLDOWN - delta
+                    db.rollback()
+                    return jsonify(
+                        success=False,
+                        message="لم يحن وقت المكافأة بعد",
+                        remaining_seconds=int(remaining.total_seconds()),
+                    ), 429
+
+            # حدّث وقت المكافأة
+            cur.execute("""
+                UPDATE users
+                SET last_reward_claim_at = NOW()
+                WHERE id = %s
+            """, (user_id,))
+
+            # أضف المكافأة إلى USD (Upsert)
+            cur.execute("""
+                INSERT INTO balances (user_id, currency, amount)
+                VALUES (%s, 'USD', %s)
+                ON CONFLICT (user_id, currency)
+                DO UPDATE SET amount = balances.amount + EXCLUDED.amount
+                RETURNING amount
+            """, (user_id, float(REWARD_AMOUNT)))
+
+            new_usd = cur.fetchone()
+            new_usd_val = new_usd["amount"] if isinstance(new_usd, dict) else new_usd[0]
+
+            db.commit()
+            return jsonify(
+                success=True,
+                message=f"✅ تم إضافة {REWARD_AMOUNT}$ إلى رصيد USD",
+                new_usd=float(new_usd_val),
+                new_usd_balance=float(new_usd_val),   # للتوافق مع الواجهة
+            )
+
+        # ===== SQLite =====
+        cur = db.cursor()
         cur.execute("SELECT last_reward_claim_at FROM users WHERE id = ?", (user_id,))
         u = cur.fetchone()
         if not u:
             return jsonify(success=False, message="المستخدم غير موجود"), 404
 
-        # وقت الآن (نخزنه نص)
-        now = datetime.utcnow()
-        last = u["last_reward_claim_at"]
+        last = u["last_reward_claim_at"] if isinstance(u, sqlite3.Row) else u[0]
+        now = datetime.now(timezone.utc)
 
         if last:
-            # حاول parse ISO
             try:
+                # نخزنها كنص ISO، نحولها
                 last_dt = datetime.fromisoformat(last)
-            except:
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+            except Exception:
                 last_dt = None
 
             if last_dt and (now - last_dt) < COOLDOWN:
@@ -2530,27 +2643,53 @@ def activate_reward():
                 return jsonify(
                     success=False,
                     message="لم يحن وقت المكافأة بعد",
-                    remaining_seconds=int(remaining.total_seconds())
+                    remaining_seconds=int(remaining.total_seconds()),
                 ), 429
 
         cur.execute("UPDATE users SET last_reward_claim_at = ? WHERE id = ?", (now.isoformat(), user_id))
 
-        # upsert لجدول balances
         cur.execute("""
             INSERT INTO balances (user_id, currency, amount)
             VALUES (?, 'USD', ?)
-            ON CONFLICT(user_id, currency) DO UPDATE SET amount = amount + excluded.amount
-        """, (user_id, REWARD_AMOUNT))
+            ON CONFLICT(user_id, currency)
+            DO UPDATE SET amount = amount + excluded.amount
+        """, (user_id, float(REWARD_AMOUNT)))
 
         cur.execute("SELECT amount FROM balances WHERE user_id=? AND currency='USD'", (user_id,))
-        new_usd = cur.fetchone()[0]
+        new_usd = cur.fetchone()
+        new_usd_val = new_usd["amount"] if isinstance(new_usd, sqlite3.Row) else new_usd[0]
 
         db.commit()
-        return jsonify(success=True, message="✅ تم إضافة 0.02$ إلى رصيد USD", new_usd=float(new_usd))
+        return jsonify(
+            success=True,
+            message=f"✅ تم إضافة {REWARD_AMOUNT}$ إلى رصيد USD",
+            new_usd=float(new_usd_val),
+            new_usd_balance=float(new_usd_val),
+        )
 
-    finally:
-        db.close()    
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logging.exception("activate_reward failed: %s", e)
+        return jsonify(success=False, message="حدث خطأ داخلي أثناء تفعيل المكافأة"), 500
 
+@app.get("/rewards")
+def rewards_page():
+    if not session.get("user_id"):
+        return redirect(url_for("login"))
+
+    # لو عندك نفس تجهيزات dashboard (username/user/unread_notifications..)
+    user = get_user(session.get("username")) if session.get("username") else None
+
+    return render_template(
+        "rewards.html",
+        username=session.get("username"),
+        user=user,
+        reward_amount=REWARD_AMOUNT,
+        cooldown_hours=COOLDOWN_HOURS,
+    )        
 # ==============================
 # صفحة الإشعارات للمستخدم
 # ==============================

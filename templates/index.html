@@ -58,8 +58,8 @@
       🆘 {% if session.get('lang') == 'en' %}Support{% else %}الدعم{% endif %}
     </a>
 
-    <!-- زر المكافأة (بدون route) -->
-    <a href="#" class="reward-link" onclick="openReward(); return false;">
+    <!-- زر المكافأة -->
+    <a href="{{ url_for('rewards_page') }}" class="reward-link">
       🎁 {% if session.get('lang') == 'en' %}Rewards{% else %}المكافأة{% endif %}
     </a>
 
@@ -372,7 +372,9 @@ Payout info (e.g. bank / wallet / agent name)
       {% endif %}
     </p>
 
-    <button type="button" class="btn" onclick="activateReward()">
+    <div id="reward_msg" class="note" style="white-space:pre-line;"></div>
+
+    <button type="button" class="btn" id="rewardActivateBtn">
       {% if session.get('lang') == 'en' %}
         Activate
       {% else %}
@@ -380,7 +382,7 @@ Payout info (e.g. bank / wallet / agent name)
       {% endif %}
     </button>
 
-    <button type="button" class="btn btn-secondary" onclick="closeReward()" style="margin-top:8px;">
+    <button type="button" class="btn btn-secondary" id="rewardCloseBtn" style="margin-top:8px;">
       {% if session.get('lang') == 'en' %}
         Close
       {% else %}
@@ -502,8 +504,7 @@ Payout info (e.g. bank / wallet / agent name)
       }
 
       if (!response.ok) {
-        resultElem.textContent =
-          msgError + " " + (data.message || ("HTTP " + response.status));
+        resultElem.textContent = msgError + " " + (data.message || ("HTTP " + response.status));
         return;
       }
 
@@ -514,9 +515,7 @@ Payout info (e.g. bank / wallet / agent name)
 
         if (data.balances) {
           Object.entries(data.balances).forEach(([cur, val]) => {
-            const el = document.querySelector(
-              `.balance-amount[data-currency="${cur}"]`
-            );
+            const el = document.querySelector(`.balance-amount[data-currency="${cur}"]`);
             if (el) el.textContent = Number(val).toFixed(2);
           });
         }
@@ -531,35 +530,108 @@ Payout info (e.g. bank / wallet / agent name)
 
   // ========= Rewards Modal =========
   function openReward() {
-    document.getElementById("rewardModal").style.display = "flex";
+    const modal = document.getElementById("rewardModal");
+    const msg = document.getElementById("reward_msg");
+    if (msg) msg.textContent = "";
+    if (modal) modal.style.display = "flex";
+    console.log("[Rewards] Modal opened");
   }
 
   function closeReward() {
-    document.getElementById("rewardModal").style.display = "none";
+    const modal = document.getElementById("rewardModal");
+    if (modal) modal.style.display = "none";
+    console.log("[Rewards] Modal closed");
+  }
+
+  function _formatRemaining(seconds) {
+    const s = Math.max(0, Number(seconds || 0));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    return `${h}h ${m}m ${r}s`;
   }
 
   async function activateReward() {
-    try {
-      const res = await fetch("/activate_reward", { method: "POST", credentials: "same-origin" });
-      const data = await res.json();
+    const msg = document.getElementById("reward_msg");
+    const btn = document.getElementById("rewardActivateBtn");
 
-      if (data.success) {
-        const usdEl = document.querySelector('.balance-amount[data-currency="USD"]');
-        if (usdEl && data.new_usd_balance !== undefined) {
-          usdEl.textContent = Number(data.new_usd_balance).toFixed(2);
-        } else if (usdEl && data.new_usd !== undefined) {
-          usdEl.textContent = Number(data.new_usd).toFixed(2);
-        }
-        alert(data.message || "✅ Done");
-        closeReward();
-      } else {
-        alert(data.message || "❌ Failed");
+    try {
+      if (btn) btn.disabled = true;
+      if (msg) msg.textContent = "{% if session.get('lang')=='en' %}Activating...{% else %}جاري التفعيل...{% endif %}";
+      console.log("[Rewards] POST /activate_reward ...");
+
+      const res = await fetch("/activate_reward", {
+        method: "POST",
+        credentials: "same-origin"
+      });
+
+      const data = await res.json().catch(() => null);
+      console.log("[Rewards] response:", res.status, data);
+
+      if (!data) {
+        if (msg) msg.textContent = "{% if session.get('lang')=='en' %}Server returned invalid response.{% else %}الخادم أعاد رد غير صالح.{% endif %}";
+        return;
       }
+
+      if (res.ok && data.success) {
+        const usdEl = document.querySelector('.balance-amount[data-currency="USD"]');
+
+        // دعم أي اسم يرجعه السيرفر (new_usd أو new_usd_balance)
+        const newUsdVal = (data.new_usd_balance !== undefined) ? data.new_usd_balance : data.new_usd;
+
+        if (usdEl && newUsdVal !== undefined) {
+          usdEl.textContent = Number(newUsdVal).toFixed(2);
+        }
+
+        if (msg) msg.textContent = data.message || "✅ Done";
+        // اختياري: اغلاق المودال بعد النجاح
+        // closeReward();
+        return;
+      }
+
+      // حالة كولداون أو أي خطأ
+      let errorText = data.message || "❌ Failed";
+      if (data.remaining_seconds !== undefined) {
+        errorText += "\n⏳ المتبقي: " + _formatRemaining(data.remaining_seconds);
+      }
+      if (msg) msg.textContent = errorText;
+
     } catch (e) {
-      alert('{% if session.get("lang")=="en" %}Activation error{% else %}حدث خطأ أثناء التفعيل{% endif %}');
-      console.error(e);
+      console.error("[Rewards] Activation error:", e);
+      if (msg) msg.textContent = '{% if session.get("lang")=="en" %}Activation error{% else %}حدث خطأ أثناء التفعيل{% endif %}';
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
+
+  // ربط الأحداث بعد تحميل الصفحة (يضمن الاشتغال حتى بدون onclick)
+  document.addEventListener("DOMContentLoaded", () => {
+    console.log("[Index] DOMContentLoaded - reward wiring...");
+
+    const rewardLink = document.getElementById("rewardLink");
+    const closeBtn = document.getElementById("rewardCloseBtn");
+    const activateBtn = document.getElementById("rewardActivateBtn");
+    const modal = document.getElementById("rewardModal");
+
+    if (rewardLink) {
+      rewardLink.addEventListener("click", (e) => {
+        e.preventDefault();
+        openReward();
+      });
+    } else {
+      console.warn("[Rewards] rewardLink not found");
+    }
+
+    if (closeBtn) closeBtn.addEventListener("click", closeReward);
+    if (activateBtn) activateBtn.addEventListener("click", activateReward);
+
+    // اغلاق عند الضغط خارج الكارد
+    if (modal) {
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) closeReward();
+      });
+    }
+  });
 </script>
 </body>
 </html>
