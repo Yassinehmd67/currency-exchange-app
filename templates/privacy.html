@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="{{ session.get('lang','ar') }}" dir="{{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v=1) }}">
+
+  <title>
+    {% if session.get('lang') == 'en' %}
+      Privacy Policy
+    {% else %}
+      سياسة الخصوصية
+    {% endif %}
+  </title>
+</head>
+
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <a class="lang-btn" href="{{ url_for('toggle_language') }}">
+      🌐
+      {% if session.get('lang','ar') == 'ar' %}
+        {{ t('english') }}
+      {% else %}
+        {{ t('arabic') }}
+      {% endif %}
+    </a>
+  </div>
+
+  <div class="topbar-links">
+    <!-- ✅ زر الرجوع أعلى اليمين -->
+    <a href="{{ url_for('index') }}">
+      ↩️ {% if session.get('lang') == 'en' %}Back{% else %}رجوع{% endif %}
+    </a>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="card">
+    <h2>
+      🛡️ {% if session.get('lang') == 'en' %}Privacy Policy{% else %}سياسة الخصوصية{% endif %}
+    </h2>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        This Privacy Policy explains what data we collect, how we use it, and the choices you have.
+      {% else %}
+        توضح سياسة الخصوصية هذه أنواع البيانات التي نجمعها وكيف نستخدمها والخيارات المتاحة لك.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        1) Data We Collect
+      {% else %}
+        1) البيانات التي نجمعها
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        We may collect the following types of data:
+        <ul>
+          <li><strong>Account data</strong>: username, login identifiers, and basic profile info you provide.</li>
+          <li><strong>Transaction-related data</strong>: amounts, currencies, timestamps, and operation details you submit (e.g., TxID proof for deposits).</li>
+          <li><strong>Support data</strong>: messages you send to support (WhatsApp/Telegram) and any attachments you provide.</li>
+          <li><strong>Technical data</strong>: IP address, device/browser info, logs for security and troubleshooting (as available on hosting providers).</li>
+        </ul>
+      {% else %}
+        قد نجمع الأنواع التالية من البيانات:
+        <ul>
+          <li><strong>بيانات الحساب</strong>: اسم المستخدم ومعرّفات الدخول وبعض المعلومات الأساسية التي تقدّمها.</li>
+          <li><strong>بيانات العمليات</strong>: المبالغ والعملات والتوقيتات وتفاصيل العملية (مثل TxID أو إثبات الشحن).</li>
+          <li><strong>بيانات الدعم</strong>: الرسائل التي ترسلها للدعم (واتساب/تيليجرام) وأي مرفقات ترسلها.</li>
+          <li><strong>بيانات تقنية</strong>: عنوان IP ومعلومات المتصفح/الجهاز وسجلات أمنية وتشخيصية (حسب ما يتيحه مزود الاستضافة).</li>
+        </ul>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        2) How We Use Your Data
+      {% else %}
+        2) كيف نستخدم بياناتك
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        We use your data to:
+        <ul>
+          <li>Provide and operate the platform (balances, conversions, deposit/withdrawal requests).</li>
+          <li>Verify submitted proofs (e.g., TxID) and prevent fraud or abuse.</li>
+          <li>Communicate with you about account activity, notifications, and support requests.</li>
+          <li>Improve security, detect suspicious activity, and fix technical issues.</li>
+        </ul>
+      {% else %}
+        نستخدم بياناتك من أجل:
+        <ul>
+          <li>تشغيل المنصة وتقديم خدماتها (الأرصدة، التحويل، الشحن، السحب).</li>
+          <li>التحقق من الإثباتات (مثل TxID) ومنع الاحتيال أو إساءة الاستخدام.</li>
+          <li>التواصل معك بخصوص الإشعارات وطلبات الدعم.</li>
+          <li>تعزيز الأمان وكشف الأنشطة المشبوهة وإصلاح المشاكل التقنية.</li>
+        </ul>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        3) Data Sharing
+      {% else %}
+        3) مشاركة البيانات
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        We do <strong>not</strong> sell your personal data.
+        We may share limited data only when necessary:
+        <ul>
+          <li>With hosting or infrastructure providers to operate the service.</li>
+          <li>When required by law or to protect rights, safety, and security.</li>
+          <li>With your consent (for example, if you request a specific action that requires sharing details).</li>
+        </ul>
+      {% else %}
+        نحن <strong>لا</strong> نبيع بياناتك الشخصية.
+        قد نشارك بيانات محدودة فقط عند الضرورة:
+        <ul>
+          <li>مع مزودي الاستضافة/البنية التحتية لتشغيل الخدمة.</li>
+          <li>عند وجود التزام قانوني أو لحماية الحقوق والسلامة والأمن.</li>
+          <li>بموافقتك (مثلاً إذا طلبت إجراءً يتطلب مشاركة تفاصيل معينة).</li>
+        </ul>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        4) Cookies & Analytics
+      {% else %}
+        4) ملفات تعريف الارتباط والتحليلات
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        We may use essential cookies for login sessions and security.
+        If we enable advertising (e.g., Google AdSense) in the future, third-party partners may use cookies to serve ads.
+      {% else %}
+        قد نستخدم ملفات تعريف الارتباط الأساسية لجلسات تسجيل الدخول والأمان.
+        وفي حال تفعيل الإعلانات لاحقًا (مثل Google AdSense) فقد تستخدم الجهات الخارجية ملفات تعريف الارتباط لعرض الإعلانات.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        5) Data Retention
+      {% else %}
+        5) مدة الاحتفاظ بالبيانات
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        We keep your data only as long as necessary to provide the service, comply with legal obligations,
+        resolve disputes, and enforce policies.
+      {% else %}
+        نحتفظ بالبيانات للمدة اللازمة لتقديم الخدمة والالتزامات القانونية ومعالجة النزاعات وتطبيق السياسات.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        6) Your Rights
+      {% else %}
+        6) حقوقك
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        You may request access, correction, or deletion of your data where applicable.
+        Contact support to submit a request.
+      {% else %}
+        يمكنك طلب الوصول إلى بياناتك أو تصحيحها أو حذفها (حيثما ينطبق).
+        تواصل مع الدعم لتقديم الطلب.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        7) Contact
+      {% else %}
+        7) التواصل
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        For privacy-related questions, contact us via the Support page.
+      {% else %}
+        لأي استفسار متعلق بالخصوصية، تواصل معنا عبر صفحة الدعم.
+      {% endif %}
+      <br><br>
+      <a href="{{ url_for('support') }}">
+        🆘 {% if session.get('lang') == 'en' %}Support{% else %}الدعم{% endif %}
+      </a>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

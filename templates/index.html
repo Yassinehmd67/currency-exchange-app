@@ -71,6 +71,14 @@
       🔓 {% if session.get('lang') == 'en' %}Logout{% else %}تسجيل الخروج{% endif %}
     </a>
 
+    <a href="{{ url_for('privacy_policy') }}">
+      🛡️ {% if session.get('lang') == 'en' %}Privacy Policy{% else %}سياسة الخصوصية{% endif %}
+    </a>
+    
+    <a href="{{ url_for('terms_of_service') }}">
+      📄 {% if session.get('lang') == 'en' %}Terms of Service{% else %}شروط الاستخدام{% endif %}
+    </a>
+
   </div>
 </div>
 

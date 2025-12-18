@@ -3258,6 +3258,13 @@ def transfer_to_bot_10():
     flash("✅ تم تحويل 10$ إلى رصيد البوت بنجاح.", "success")
     return redirect(url_for("link_telegram"))    
 
+@app.route("/privacy")
+def privacy_policy():
+    return render_template("privacy.html")
+
+@app.route("/terms")
+def terms_of_service():
+    return render_template("terms.html")
 # ==============================
 # تشغيل التطبيق
 # ==============================

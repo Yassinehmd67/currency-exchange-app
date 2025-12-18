@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="{{ session.get('lang','ar') }}" dir="{{ 'rtl' if session.get('lang','ar')=='ar' else 'ltr' }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v=1) }}">
+
+  <title>
+    {% if session.get('lang') == 'en' %}
+      Terms of Service
+    {% else %}
+      شروط الاستخدام
+    {% endif %}
+  </title>
+</head>
+
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <a class="lang-btn" href="{{ url_for('toggle_language') }}">
+      🌐
+      {% if session.get('lang','ar') == 'ar' %}
+        {{ t('english') }}
+      {% else %}
+        {{ t('arabic') }}
+      {% endif %}
+    </a>
+  </div>
+
+  <div class="topbar-links">
+    <!-- ✅ زر الرجوع أعلى اليمين -->
+    <a href="{{ url_for('index') }}">
+      ↩️ {% if session.get('lang') == 'en' %}Back{% else %}رجوع{% endif %}
+    </a>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="card">
+    <h2>
+      📜 {% if session.get('lang') == 'en' %}Terms of Service{% else %}شروط الاستخدام{% endif %}
+    </h2>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        By using this platform, you agree to these Terms. If you do not agree, please stop using the service.
+      {% else %}
+        باستخدامك للمنصة فأنت توافق على هذه الشروط. إذا لم توافق، يرجى التوقف عن استخدام الخدمة.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        1) Eligibility & Account
+      {% else %}
+        1) الأهلية والحساب
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        You are responsible for maintaining the confidentiality of your login credentials and for all activity on your account.
+        Do not share your password with others.
+      {% else %}
+        أنت مسؤول عن حماية بيانات الدخول وعن جميع الأنشطة داخل حسابك.
+        لا تشارك كلمة المرور مع الآخرين.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        2) Platform Usage Rules
+      {% else %}
+        2) قواعد الاستخدام داخل المنصة
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        You agree not to:
+        <ul>
+          <li>Use the platform for illegal activities or to violate applicable laws.</li>
+          <li>Attempt to bypass security, abuse rewards, or exploit bugs.</li>
+          <li>Submit false proofs (e.g., fake TxIDs) or misleading information.</li>
+          <li>Interfere with the service availability or other users.</li>
+        </ul>
+      {% else %}
+        أنت توافق على عدم القيام بما يلي:
+        <ul>
+          <li>استخدام المنصة في نشاط غير قانوني أو مخالف للأنظمة المعمول بها.</li>
+          <li>محاولة تجاوز الأمان أو إساءة استخدام المكافآت أو استغلال الثغرات.</li>
+          <li>تقديم إثباتات مزيفة (مثل TxID) أو معلومات مضللة.</li>
+          <li>التسبب في تعطيل الخدمة أو التأثير على مستخدمين آخرين.</li>
+        </ul>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        3) Balances & Accuracy
+      {% else %}
+        3) الأرصدة والدقة
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        We aim to display balances accurately. However, temporary differences may occur due to verification steps,
+        network confirmations, or technical issues. If you notice an issue, contact support promptly with evidence.
+      {% else %}
+        نحرص على عرض الأرصدة بدقة، لكن قد تظهر فروقات مؤقتة بسبب خطوات التحقق أو تأكيدات الشبكات أو مشاكل تقنية.
+        عند ملاحظة أي مشكلة يرجى التواصل فورًا مع الدعم وتقديم ما يثبت ذلك.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        4) Deposits & Withdrawals
+      {% else %}
+        4) الشحن والسحب
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        Deposits and withdrawals may require verification and may be processed manually depending on the method.
+        You are responsible for providing correct details (wallet/bank/recipient info). Incorrect details may cause delays or loss.
+      {% else %}
+        قد يتطلب الشحن والسحب التحقق وقد تتم معالجته يدويًا حسب الطريقة.
+        أنت مسؤول عن إدخال بيانات صحيحة (محفظة/بنك/جهة استلام). أي خطأ قد يؤدي لتأخير أو ضياع التحويل.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        5) Rewards Policy
+      {% else %}
+        5) سياسة المكافآت
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        Rewards are subject to cooldown rules and anti-abuse checks. We may suspend reward access if abnormal activity is detected.
+      {% else %}
+        المكافآت تخضع لوقت انتظار (Cooldown) وآليات منع إساءة الاستخدام. قد يتم إيقاف المكافآت عند رصد نشاط غير طبيعي.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        6) Service Availability & Changes
+      {% else %}
+        6) توفر الخدمة والتغييرات
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        We may update features, modify limits, or temporarily suspend the service for maintenance or security reasons.
+      {% else %}
+        قد نقوم بتحديث الميزات أو تعديل الحدود أو إيقاف الخدمة مؤقتًا للصيانة أو لأسباب أمنية.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        7) Limitation of Liability
+      {% else %}
+        7) إخلاء المسؤولية وحدودها
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        The platform is provided “as-is”. We are not liable for losses caused by:
+        user mistakes, third-party services, network delays, or force majeure events.
+      {% else %}
+        تُقدَّم المنصة “كما هي”. ولا نتحمل مسؤولية الخسائر الناتجة عن:
+        أخطاء المستخدم، خدمات الأطراف الثالثة، تأخر الشبكات، أو الظروف القاهرة.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="section-title">
+      {% if session.get('lang') == 'en' %}
+        8) Contact & Disputes
+      {% else %}
+        8) التواصل والنزاعات
+      {% endif %}
+    </h3>
+
+    <div class="note">
+      {% if session.get('lang') == 'en' %}
+        If you have questions or disputes, contact support first and provide clear details and evidence.
+      {% else %}
+        عند وجود استفسار أو نزاع، يرجى التواصل مع الدعم أولًا مع تقديم تفاصيل واضحة وأدلة.
+      {% endif %}
+      <br><br>
+      <a href="{{ url_for('support') }}">
+        🆘 {% if session.get('lang') == 'en' %}Support{% else %}الدعم{% endif %}
+      </a>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
