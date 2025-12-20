@@ -147,6 +147,16 @@ REF_AUTO_CASHOUT_THRESHOLD = float(os.getenv("REF_AUTO_CASHOUT_THRESHOLD", "1.0"
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
+@app.before_request
+def _init_once():
+    if getattr(app, "_db_inited", False):
+        return
+    try:
+        init_db()
+        app._db_inited = True
+    except Exception as e:
+        logging.exception("init_db failed on first request: %s", e)
+        # لا نعمل raise هنا حتى لا نكسر السيرفر بالكامل
 # ==============================
 # الترجمة (translations.json + t)
 # ==============================
@@ -410,7 +420,7 @@ def init_db():
                 platform_user_id BIGINT,
                 code TEXT,
                 code_hash TEXT,
-                expires_at TEXT,
+                expires_at TIMESTAMPTZ,
                 used_at TEXT,
                 used_by_telegram_id BIGINT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
@@ -421,11 +431,21 @@ def init_db():
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code TEXT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code_hash TEXT;")
-        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS expires_at TEXT;")
+        cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS used_at TEXT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS used_by_telegram_id BIGINT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS created_at TEXT;")
 
+        # تحويل النوع إذا كان موجود كـ TEXT سابقاً
+        try:
+            cur.execute("""
+                ALTER TABLE telegram_link_codes
+                ALTER COLUMN expires_at TYPE TIMESTAMPTZ
+                USING expires_at::timestamptz;
+            """)
+            db.commit()
+        except Exception:
+            db.rollback()
         # فهارس/قيود
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tlc_code ON telegram_link_codes(code);")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tlc_code_hash ON telegram_link_codes(code_hash);")
@@ -846,9 +866,8 @@ def _generate_link_code(length=8):
 def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) -> str:
     db = get_db()
 
-    expires_at = (
-        datetime.now(timezone.utc) + timedelta(minutes=minutes_valid)
-    ).strftime("%Y-%m-%d %H:%M:%S")
+    expires_at_dt = datetime.now(timezone.utc) + timedelta(minutes=minutes_valid)
+    expires_at = expires_at_dt if USE_POSTGRES else expires_at_dt.isoformat()
 
     alphabet = string.ascii_uppercase + string.digits
     attempts = 25
@@ -942,8 +961,6 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
     raw = (code_raw or "").strip().upper()
 
     # يقبل الكود مع أو بدون prefix (LNK-XXXXXXXX أو XXXXXXXX)
-    raw = (code_raw or "").strip().upper()
-
     if raw.startswith(LINK_CODE_PREFIX):
         code_clean = raw[len(LINK_CODE_PREFIX):].strip()
     else:
@@ -1099,60 +1116,7 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
         except Exception:
             pass
         return False, "❌ حدث خطأ أثناء الربط. حاول مرة أخرى."
-
-    # SQLite: SELECT ثم UPDATE
-    try:
-        row = db.execute(
-            _sql("""
-                SELECT platform_user_id, expires_at, used_at
-                FROM telegram_link_codes
-                WHERE code = ?
-            """),
-            (code,),
-        ).fetchone()
-
-        if not row:
-            return False, "الكود غير صحيح."
-        if (row.get("used_at") if isinstance(row, dict) else row["used_at"]):
-            return False, "هذا الكود مستعمل مسبقاً."
-        if (row.get("expires_at") if isinstance(row, dict) else row["expires_at"]) <= now:
-            return False, "هذا الكود منتهي."
-
-        platform_user_id = row["platform_user_id"] if isinstance(row, dict) else row["platform_user_id"]
-
-        db.execute(
-            _sql("""
-                UPDATE telegram_link_codes
-                SET used_at = ?, used_by_telegram_id = ?
-                WHERE code = ? AND used_at IS NULL
-            """),
-            (now, telegram_id, code),
-        )
-
-        db.execute(
-            """
-            INSERT OR IGNORE INTO telegram_users (telegram_id, referral_credits_usd, bot_balance_usd, created_at)
-            VALUES (?, 0, 0, ?)
-            """,
-            (telegram_id, now),
-        )
-
-        db.execute(
-            _sql("""
-                UPDATE telegram_users
-                SET platform_user_id = ?, linked_at = ?
-                WHERE telegram_id = ?
-            """),
-            (platform_user_id, now, telegram_id),
-        )
-
-        db.commit()
-        return True, str(platform_user_id)
-
-    except Exception as e:
-        logging.error("redeem_telegram_link_code sqlite error: %s", e)
-        return False, "حدث خطأ أثناء الربط."
-    
+            
 def get_telegram_wallet(telegram_id: int):
     """
     يرجع: bot_balance_usd + referral_credits_usd + platform_user_id (إن وجد)
@@ -1585,8 +1549,6 @@ def attach_main_menu_button(kb=None):
         [{"text": "🏠 القائمة الرئيسية", "callback_data": "main_menu"}]
     )
     return kb    
-# تهيئة قاعدة البيانات عند تحميل الملف
-init_db()
 # ==============================
 # المسارات الأساسية (المستخدم)
 # ==============================
