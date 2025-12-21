@@ -2792,7 +2792,7 @@ def telegram_webhook():
     # =========================
     if "message" in update:
         message = update["message"]
-        text = message.get("text", "") or ""
+        text = (message.get("text") or "").strip()
         chat_id = message["chat"]["id"]
         from_user = message.get("from", {})
 
@@ -2803,6 +2803,35 @@ def telegram_webhook():
 
         # تسجيل/تحديث المستخدم في telegram_users + الإحالات
         register_telegram_user(from_user, start_param)
+
+        # أمر /start
+        if text.startswith("/start"):
+            tg_id = from_user.get("id")
+            ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
+
+            welcome_text = (
+                "👋 أهلاً بك في بوت المنصة.\n\n"
+                "يمكنك من هنا الدخول إلى المنصة، استخدام نظام الإحالات، "
+                "أو الوصول إلى بعض الخدمات الفرعية.\n\n"
+                "🔗 رابط المنصة:\n"
+                f"{SITE_PUBLIC_URL}\n\n"
+                "✅ رابط إحالتك:\n"
+                f"{ref_link}"
+            )
+
+            main_kb = {
+                "inline_keyboard": [
+                    [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
+                    [{"text": "💳 الرصيد / Balance", "callback_data": "wallet"}],
+                    [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
+                    [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
+                    [{"text": "💸 تحويل الرصيد / Transfer balance", "callback_data": "transfer_balance"}],
+                    [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
+                ]
+            }
+
+            tg_send_message(chat_id, welcome_text, reply_markup=main_kb)
+            return "ok", 200
 
         # محاولة تفسير النص على أنه كود ربط
         raw = (text or "").strip().upper()
@@ -2829,49 +2858,18 @@ def telegram_webhook():
 
                 tg_send_message(
                     chat_id,
-                    "✅ تم ربط حسابك بنجاح.\n"
-                    + (f"👤 حساب المنصة: <b>{uname}</b>" if uname else ""),
+                    "✅ تم ربط حسابك بنجاح.\n" + (f"👤 حساب المنصة: <b>{uname}</b>" if uname else ""),
                 )
 
+                # صرف تلقائي للإحالات إن وجدت
                 try:
                     apply_referral_auto_cashout_for_telegram(from_user.get("id"))
                 except Exception:
                     pass
             else:
-                tg_send_me5ssage(chat_id, f"❌ {info}")
+                # ✅ إصلاح الخطأ المطبعي هنا
+                tg_send_message(chat_id, f"❌ {info}")
 
-            return "ok", 200
-        
-        # (1) ✅ رتّبت المسافات/الـindent لهذا الجزء داخل: if "message" in update
-        # ضع هذا المقطع مكان جزء /start عندك (بدون كود)
-
-        # أمر /start (بدون كود)
-        if text.startswith("/start"):
-            tg_id = from_user.get("id")
-            ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
-
-            welcome_text = (
-                "👋 أهلاً بك في بوت المنصة.\n\n"
-                "يمكنك من هنا الدخول إلى المنصة، استخدام نظام الإحالات، "
-                "أو الوصول إلى بعض الخدمات الفرعية.\n\n"
-                "🔗 رابط المنصة:\n"
-                f"{SITE_PUBLIC_URL}\n\n"
-                "✅ رابط إحالتك:\n"
-                f"{ref_link}"
-           )
-
-            main_kb = {
-                "inline_keyboard": [
-                    [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
-                    [{"text": "💳 الرصيد / Balance", "callback_data": "wallet"}],
-                    [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
-                    [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
-                    [{"text": "💸 تحويل الرصيد / Transfer balance", "callback_data": "transfer_balance"}],
-                    [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
-                ]
-            }
-
-            tg_send_message(chat_id, welcome_text, reply_markup=main_kb)
             return "ok", 200
 
         # أي رسالة أخرى
@@ -2881,24 +2879,18 @@ def telegram_webhook():
     # =========================
     # أزرار Inline (callback_query)
     # =========================
-    # (2) ✅ هذا هو الجزء المحدّث بالكامل (callback_query) مع زر الرصيد (wallet)
-# استبدل مقطع:  if "callback_query" in update:  عندك بهذا المقطع (أو على الأقل أضف جزء wallet + main_menu مرتب)
-
-# =========================
-# أزرار Inline (callback_query)
-# =========================
-        if "callback_query" in update:
-            cq = update["callback_query"]
-            data = cq.get("data")
-            chat_id = cq["message"]["chat"]["id"]
-            from_user = cq.get("from", {})
-            tg_id = from_user.get("id")
-            callback_id = cq.get("id")
+    if "callback_query" in update:
+        cq = update["callback_query"]
+        data = cq.get("data")
+        chat_id = cq["message"]["chat"]["id"]
+        from_user = cq.get("from", {})
+        tg_id = from_user.get("id")
+        callback_id = cq.get("id")
 
         if callback_id:
             tg_answer_callback(callback_id)
 
-            # 💳 الرصيد / Balance
+        # 💳 الرصيد / Balance
         if data == "wallet":
             w = get_telegram_wallet(int(tg_id))
 
@@ -2919,64 +2911,33 @@ def telegram_webhook():
             tg_send_message(chat_id, msg, reply_markup=kb)
             return "ok", 200
 
-    # 🏠 الرجوع للقائمة الرئيسية
-    if data == "main_menu":
-        ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
-
-        welcome_text = (
-            "👋 أهلاً بك في بوت المنصة.\n\n"
-            "يمكنك من هنا الدخول إلى المنصة، استخدام نظام الإحالات، "
-            "أو الوصول إلى بعض الخدمات الفرعية.\n\n"
-            "🔗 رابط المنصة:\n"
-            f"{SITE_PUBLIC_URL}\n\n"
-            "✅ رابط إحالتك:\n"
-            f"{ref_link}"
-        )
-
-        main_kb = {
-            "inline_keyboard": [
-                [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
-                [{"text": "💳 الرصيد / Balance", "callback_data": "wallet"}],
-                [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
-                [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
-                [{"text": "💸 تحويل الرصيد / Transfer balance", "callback_data": "transfer_balance"}],
-                [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
-            ]
-        }
-
-        tg_send_message(chat_id, welcome_text, reply_markup=main_kb)
-        return "ok", 200
-
-        # 👥 نظام الإحالات
-        if data == "referrals":
+        # 🏠 الرجوع للقائمة الرئيسية
+        if data == "main_menu":
             ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
 
-            db = get_db()
-            referral_credits = 0.0
-            try:
-                row = db.execute(
-                    _sql("SELECT referral_credits_usd FROM telegram_users WHERE telegram_id = ?"),
-                    (tg_id,),
-                ).fetchone()
-                if row and row.get("referral_credits_usd") is not None:
-                    referral_credits = float(row["referral_credits_usd"])
-            except Exception as e:
-                logging.warning("referrals select error: %s", e)
-
-            msg = (
-                "👥 <b>نظام الإحالات</b>\n\n"
-                f"رصيد مكافآت الإحالة الخاص بك: <b>{referral_credits:.3f}$</b>\n\n"
-                "هذا هو رابط الإحالة الخاص بك:\n"
-                f"{ref_link}\n\n"
-                f"🎁 مكافأة الإحالة المباشرة: {REF_L1_BONUS_USD}$\n"
-                f"🎁 مكافأة الإحالة غير المباشرة (Level 2): {REF_L2_BONUS_USD}$\n\n"
-                "ℹ️ عند وصول أرباح الإحالة إلى 1$ سيتم تحويلها تلقائياً إلى رصيدك في المنصة (USD) إذا كان حسابك مربوطاً."
+            welcome_text = (
+                "👋 أهلاً بك في بوت المنصة.\n\n"
+                "يمكنك من هنا الدخول إلى المنصة، استخدام نظام الإحالات، "
+                "أو الوصول إلى بعض الخدمات الفرعية.\n\n"
+                "🔗 رابط المنصة:\n"
+                f"{SITE_PUBLIC_URL}\n\n"
+                "✅ رابط إحالتك:\n"
+                f"{ref_link}"
             )
 
-            kb = attach_main_menu_button()
-            tg_send_message(chat_id, msg, reply_markup=kb)
-            return "ok", 200
+            main_kb = {
+                "inline_keyboard": [
+                    [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
+                    [{"text": "💳 الرصيد / Balance", "callback_data": "wallet"}],
+                    [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
+                    [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
+                    [{"text": "💸 تحويل الرصيد / Transfer balance", "callback_data": "transfer_balance"}],
+                    [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
+                ]
+            }
 
+            tg_send_message(chat_id, welcome_text, reply_markup=main_kb)
+            return "ok", 200
 
         # 👥 نظام الإحالات
         if data == "referrals":
@@ -3023,18 +2984,12 @@ def telegram_webhook():
         if data == "transfer_balance":
             msg = (
                 "💸 <b>تحويل الرصيد</b>\n\n"
-                "حاليًا التحويل الأساسي يتم من داخل المنصة بعد الربط.\n"
-                "يمكنك أيضًا تحويل كامل رصيد البوت إلى حسابك في المنصة من هنا.\n\n"
+                "يمكنك تحويل كامل رصيد البوت (مع الإحالات) إلى حسابك في المنصة.\n\n"
                 "اختر أحد الخيارات:"
             )
             kb = {
                 "inline_keyboard": [
-                    [
-                        {
-                            "text": "💰 تحويل كل الرصيد إلى المنصة",
-                            "callback_data": "transfer_all_to_platform",
-                        }
-                    ],
+                    [{"text": "💰 تحويل كل الرصيد إلى المنصة", "callback_data": "transfer_all_to_platform"}],
                 ]
             }
             kb = attach_main_menu_button(kb)
@@ -3056,7 +3011,7 @@ def telegram_webhook():
             tg_send_message(chat_id, msg, reply_markup=kb)
             return "ok", 200
 
-        # 🔗 شرح / ربط الحساب
+        # 🔗 ربط الحساب
         if data == "link_account":
             link_url = f"{SITE_PUBLIC_URL}/link_telegram"
             msg = (
@@ -3067,11 +3022,7 @@ def telegram_webhook():
                 "4) أرسله هنا في البوت (مثال: LNK-ABC12345)\n\n"
                 "📌 الكود صالح لمدة 10 دقائق."
             )
-            kb = {
-                "inline_keyboard": [
-                    [{"text": "🔗 فتح صفحة الربط", "url": link_url}],
-                ]
-            }
+            kb = {"inline_keyboard": [[{"text": "🔗 فتح صفحة الربط", "url": link_url}]]}
             kb = attach_main_menu_button(kb)
             tg_send_message(chat_id, msg, reply_markup=kb)
             return "ok", 200
@@ -3083,8 +3034,7 @@ def telegram_webhook():
         return "ok", 200
 
     # لو لم تكن رسالة ولا callback
-    return "ok", 200                
-
+    return "ok", 200
 # ✅ (NEW) ربط الحساب من المنصة (routes)
 # ==============================
 @app.route("/link_telegram")
@@ -3122,7 +3072,7 @@ def link_telegram():
                 FROM telegram_link_codes
                 WHERE COALESCE(platform_user_id, user_id) = ?
                   AND used_at IS NULL
-                  AND expires_at::timestamptz > now()
+                  AND expires_at > now()
                 ORDER BY id DESC
                 LIMIT 1
             """) if USE_POSTGRES else _sql("""
