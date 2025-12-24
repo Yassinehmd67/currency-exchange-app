@@ -9,7 +9,6 @@ import requests  # Telegram Bot API
 from datetime import datetime, timezone, timedelta
 from flask import jsonify, session
 from decimal import Decimal, ROUND_DOWN
-from flask import jsonify, session
 import time
 
 import csv
@@ -153,9 +152,10 @@ def _init_once():
         return
     try:
         init_db()
-        app._db_inited = True
     except Exception as e:
         logging.exception("init_db failed on first request: %s", e)
+    finally:
+        app._db_inited = True
         # لا نعمل raise هنا حتى لا نكسر السيرفر بالكامل
 # ==============================
 # الترجمة (translations.json + t)
@@ -235,7 +235,7 @@ class PGConnectionWrapper:
         return self._conn.commit()
 
     def rollback(self):
-        return self._conn.rollback()    
+        return self._conn.rollback()
 
     def close(self):
         return self._conn.close()
@@ -277,21 +277,33 @@ def _pg_column_exists(cur, table_name: str, column_name: str) -> bool:
     return cur.fetchone() is not None
 
 
+def _sqlite_column_exists(cur, table_name: str, column_name: str) -> bool:
+    try:
+        cols = cur.execute(f"PRAGMA table_info({table_name})").fetchall()
+        names = {c[1] for c in cols}
+        return column_name in names
+    except Exception:
+        return False
+
+
 @app.teardown_appcontext
 def close_db(exc):
     db = g.pop("db", None)
     if db is not None:
         db.close()
 
-def init_db():
-    # ===== Postgres schema (Neon) =====
-    if USE_POSTGRES:
-        if psycopg2 is None:
-            raise RuntimeError(
-                "psycopg2 is not installed. Add psycopg2-binary to requirements.txt"
-            )
 
-        db = psycopg2.connect(DATABASE_URL)
+# ==============================
+# ✅ init_db (تمت إعادتها + إصلاحها)
+# ==============================
+def init_db():
+    """
+    - ينشئ الجداول الأساسية إن لم تكن موجودة
+    - ينفذ upgrades للأعمدة الناقصة
+    - يشغّل ensure_price_alerts_table لتوحيد جدول تنبيهات الأسعار
+    """
+    if USE_POSTGRES:
+        db = get_db()
         cur = db.cursor()
 
         # ---------- users ----------
@@ -308,11 +320,12 @@ def init_db():
                 email_verify_sent_at TEXT,
                 password_reset_token TEXT,
                 password_reset_sent_at TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
+                last_reward_claim_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ DEFAULT now()
             );
         """)
 
-        # ترقية جدول users لو كان قديماً (Postgres)
+        # ترقيات users لو كانت قديمة
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_token TEXT;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verify_sent_at TEXT;")
@@ -381,7 +394,7 @@ def init_db():
                 id BIGSERIAL PRIMARY KEY,
                 user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 title TEXT NOT NULL,
-                body TEXT NOT NULL,
+                body TEXT,
                 type TEXT,
                 is_read INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
@@ -403,15 +416,29 @@ def init_db():
                 platform_user_id BIGINT,
                 linked_at TEXT,
                 bot_balance_usd DOUBLE PRECISION DEFAULT 0,
+                pending_action TEXT,
+                pending_data TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP::text
             );
         """)
 
-        # ترقية telegram_users لو كانت قديمة (Postgres)
+        # ترقيات telegram_users لو كانت قديمة
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS referral_credits_usd DOUBLE PRECISION DEFAULT 0;")
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS linked_at TEXT;")
         cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS bot_balance_usd DOUBLE PRECISION DEFAULT 0;")
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS pending_action TEXT;")
+        cur.execute("ALTER TABLE telegram_users ADD COLUMN IF NOT EXISTS pending_data TEXT;")
+
+        # ---------- telegram_states ----------
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_states (
+                telegram_id BIGINT PRIMARY KEY,
+                state TEXT,
+                data_json TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP::text
+            );
+        """)
 
         # ---------- telegram_link_codes ----------
         cur.execute("""
@@ -427,7 +454,7 @@ def init_db():
             );
         """)
 
-        # ترقية telegram_link_codes لو كانت قديمة (Postgres)
+        # ترقيات telegram_link_codes
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS platform_user_id BIGINT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code TEXT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS code_hash TEXT;")
@@ -436,16 +463,15 @@ def init_db():
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS used_by_telegram_id BIGINT;")
         cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN IF NOT EXISTS created_at TEXT;")
 
-        # تحويل النوع إذا كان موجود كـ TEXT سابقاً
         try:
             cur.execute("""
                 ALTER TABLE telegram_link_codes
                 ALTER COLUMN expires_at TYPE TIMESTAMPTZ
                 USING expires_at::timestamptz;
             """)
-            db.commit()
         except Exception:
             db.rollback()
+
         # فهارس/قيود
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tlc_code ON telegram_link_codes(code);")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_tlc_code_hash ON telegram_link_codes(code_hash);")
@@ -453,7 +479,10 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_tlc_expires_at ON telegram_link_codes(expires_at);")
 
         db.commit()
-        db.close()
+
+        # ✅ توحيد/ترقية جدول تنبيهات الأسعار
+        ensure_price_alerts_table()
+
         return
 
     # ==============================
@@ -621,6 +650,8 @@ def init_db():
             platform_user_id INTEGER,
             linked_at TEXT,
             bot_balance_usd REAL DEFAULT 0,
+            pending_action TEXT,
+            pending_data TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
     """)
@@ -637,27 +668,203 @@ def init_db():
             except Exception:
                 pass
         if "referral_credits_usd" not in cols_tg:
-            cur.execute("ALTER TABLE telegram_users ADD COLUMN referral_credits_usd REAL DEFAULT 0")
+            try:
+                cur.execute("ALTER TABLE telegram_users ADD COLUMN referral_credits_usd REAL DEFAULT 0")
+            except Exception:
+                pass
         if "platform_user_id" not in cols_tg:
-            cur.execute("ALTER TABLE telegram_users ADD COLUMN platform_user_id INTEGER")
+            try:
+                cur.execute("ALTER TABLE telegram_users ADD COLUMN platform_user_id INTEGER")
+            except Exception:
+                pass
         if "linked_at" not in cols_tg:
-            cur.execute("ALTER TABLE telegram_users ADD COLUMN linked_at TEXT")
+            try:
+                cur.execute("ALTER TABLE telegram_users ADD COLUMN linked_at TEXT")
+            except Exception:
+                pass
+        if "pending_action" not in cols_tg:
+            try:
+                cur.execute("ALTER TABLE telegram_users ADD COLUMN pending_action TEXT")
+            except Exception:
+                pass
+        if "pending_data" not in cols_tg:
+            try:
+                cur.execute("ALTER TABLE telegram_users ADD COLUMN pending_data TEXT")
+            except Exception:
+                pass
 
     # ---------- telegram_link_codes (SQLite) ----------
     cur.execute("""
         CREATE TABLE IF NOT EXISTS telegram_link_codes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             platform_user_id INTEGER NOT NULL,
-            code TEXT UNIQUE NOT NULL,
+            code TEXT UNIQUE,
+            code_hash TEXT UNIQUE,
             expires_at TEXT NOT NULL,
             used_at TEXT,
-            used_by_telegram_id INTEGER
+            used_by_telegram_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    # upgrades telegram_link_codes (SQLite)
+    if cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_link_codes';").fetchone():
+        cols_lc = {c[1] for c in cur.execute("PRAGMA table_info(telegram_link_codes)").fetchall()}
+        if "code_hash" not in cols_lc:
+            try:
+                cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN code_hash TEXT")
+            except Exception:
+                pass
+        if "used_at" not in cols_lc:
+            try:
+                cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN used_at TEXT")
+            except Exception:
+                pass
+        if "used_by_telegram_id" not in cols_lc:
+            try:
+                cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN used_by_telegram_id INTEGER")
+            except Exception:
+                pass
+        if "created_at" not in cols_lc:
+            try:
+                cur.execute("ALTER TABLE telegram_link_codes ADD COLUMN created_at TEXT")
+            except Exception:
+                pass
+
+    # ---------- telegram_states (SQLite) ----------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_states (
+            telegram_id INTEGER PRIMARY KEY,
+            state TEXT,
+            data_json TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
     """)
 
     db.commit()
     db.close()
+
+    # ✅ توحيد/ترقية جدول تنبيهات الأسعار (SQLite)
+    ensure_price_alerts_table()
     return
+
+
+def ensure_price_alerts_table():
+    """
+    إصلاح تضارب الجدول:
+    - عندك أكواد تتعامل مع:
+        base/quote/target_price/triggered_at
+      وأكواد أخرى تتعامل مع:
+        base_currency/quote_currency/target/last_triggered_at
+    الحل: إنشاء جدول واحد، ثم إضافة الأعمدة الناقصة ليدعم الشكلين.
+    """
+    db = get_db()
+
+    if USE_POSTGRES:
+        cur = db.cursor()
+
+        # إنشاء الحد الأدنى
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_price_alerts (
+                id BIGSERIAL PRIMARY KEY,
+                telegram_id BIGINT NOT NULL,
+                direction TEXT NOT NULL CHECK (direction IN ('above','below')),
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+        """)
+
+        # أعمدة الشكل الأول
+        cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN IF NOT EXISTS base TEXT;")
+        cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN IF NOT EXISTS quote TEXT;")
+        cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN IF NOT EXISTS target_price DOUBLE PRECISION;")
+        cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN IF NOT EXISTS triggered_at TIMESTAMPTZ NULL;")
+
+        # أعمدة الشكل الثاني
+        cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN IF NOT EXISTS base_currency TEXT;")
+        cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN IF NOT EXISTS quote_currency TEXT;")
+        cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN IF NOT EXISTS target DOUBLE PRECISION;")
+        cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN IF NOT EXISTS last_triggered_at TEXT;")
+
+        # فهارس
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tpa_tg ON telegram_price_alerts(telegram_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tpa_active ON telegram_price_alerts(is_active);")
+
+        db.commit()
+        return
+
+    # SQLite
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    # إنشاء الحد الأدنى
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_price_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_id INTEGER NOT NULL,
+            direction TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    # إضافة أعمدة الشكل الأول
+    if not _sqlite_column_exists(cur, "telegram_price_alerts", "base"):
+        try:
+            cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN base TEXT")
+        except Exception:
+            pass
+    if not _sqlite_column_exists(cur, "telegram_price_alerts", "quote"):
+        try:
+            cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN quote TEXT")
+        except Exception:
+            pass
+    if not _sqlite_column_exists(cur, "telegram_price_alerts", "target_price"):
+        try:
+            cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN target_price REAL")
+        except Exception:
+            pass
+    if not _sqlite_column_exists(cur, "telegram_price_alerts", "triggered_at"):
+        try:
+            cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN triggered_at TEXT")
+        except Exception:
+            pass
+
+    # إضافة أعمدة الشكل الثاني
+    if not _sqlite_column_exists(cur, "telegram_price_alerts", "base_currency"):
+        try:
+            cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN base_currency TEXT")
+        except Exception:
+            pass
+    if not _sqlite_column_exists(cur, "telegram_price_alerts", "quote_currency"):
+        try:
+            cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN quote_currency TEXT")
+        except Exception:
+            pass
+    if not _sqlite_column_exists(cur, "telegram_price_alerts", "target"):
+        try:
+            cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN target REAL")
+        except Exception:
+            pass
+    if not _sqlite_column_exists(cur, "telegram_price_alerts", "last_triggered_at"):
+        try:
+            cur.execute("ALTER TABLE telegram_price_alerts ADD COLUMN last_triggered_at TEXT")
+        except Exception:
+            pass
+
+    # Indexes
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tpa_tg ON telegram_price_alerts(telegram_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_tpa_active ON telegram_price_alerts(is_active);")
+    except Exception:
+        pass
+
+    conn.commit()
+    conn.close()
+    return
+
+
 # ==============================
 # دوال مساعدة على مستوى المستخدمين
 # ==============================
@@ -738,8 +945,8 @@ def get_user(username):
     return {
         "id": user_id,
         "username": row["username"],
-        "email": row.get("email") if isinstance(row, dict) else row["email"],
-        "phone": row.get("phone") if isinstance(row, dict) else row["phone"],
+        "email": row["email"] if "email" in row.keys() else None,
+        "phone": row["phone"] if "phone" in row.keys() else None,
         "password_hash": row["password_hash"],
         "is_admin": bool(row["is_admin"]),
         "email_verified": bool(
@@ -814,8 +1021,6 @@ def log_transaction(user_id, tx_type, amount, currency, details=""):
         ),
     )
     db.commit()
-
-
 # ==============================
 # دوال الإشعارات
 # ==============================
@@ -921,13 +1126,29 @@ def create_telegram_link_code(platform_user_id: int, minutes_valid: int = 10) ->
                 continue
 
             # SQLite
-            cur2 = db.execute(
-                """
-                INSERT OR IGNORE INTO telegram_link_codes (platform_user_id, code, expires_at)
-                VALUES (?, ?, ?)
-                """,
-                (platform_user_id, code, expires_at),
-            )
+            # ندعم تخزين code_hash أيضاً (إن وجد عمود)
+            try:
+                has_code_hash_sqlite = _sqlite_column_exists(db.cursor(), "telegram_link_codes", "code_hash")
+            except Exception:
+                has_code_hash_sqlite = False
+
+            if has_code_hash_sqlite:
+                cur2 = db.execute(
+                    """
+                    INSERT OR IGNORE INTO telegram_link_codes (platform_user_id, code, code_hash, expires_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (platform_user_id, code, code_hash, expires_at),
+                )
+            else:
+                cur2 = db.execute(
+                    """
+                    INSERT OR IGNORE INTO telegram_link_codes (platform_user_id, code, expires_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (platform_user_id, code, expires_at),
+                )
+
             db.commit()
             if cur2.rowcount and cur2.rowcount > 0:
                 return code
@@ -1033,7 +1254,8 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
                 RETURNING {user_col} AS platform_user_id
             """
 
-            r = db.execute(_sql(q), (now_str, int(telegram_id), *params, now_str)).fetchone()
+            args = [now_str, int(telegram_id)] + params + [now_str]
+            r = db.execute(_sql(q), tuple(args)).fetchone()
             if not r:
                 db.commit()
                 return False, "الكود غير صحيح أو منتهي أو مستعمل."
@@ -1057,15 +1279,34 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
             return True, str(int(platform_user_id))
 
         # --- SQLite
-        row = db.execute(
-            _sql("""
-                SELECT platform_user_id, expires_at, used_at, code
-                FROM telegram_link_codes
-                WHERE code = ?
-                LIMIT 1
-            """),
-            (code_clean,),
-        ).fetchone()
+        # ندعم البحث بـ code أو code_hash إن توفر
+        code_hash = hashlib.sha256(code_clean.encode("utf-8")).hexdigest()
+        try:
+            cur2 = db.cursor()
+            has_code_hash_sqlite = _sqlite_column_exists(cur2, "telegram_link_codes", "code_hash")
+        except Exception:
+            has_code_hash_sqlite = False
+
+        if has_code_hash_sqlite:
+            row = db.execute(
+                _sql("""
+                    SELECT platform_user_id, expires_at, used_at, code, code_hash
+                    FROM telegram_link_codes
+                    WHERE code = ? OR code_hash = ?
+                    LIMIT 1
+                """),
+                (code_clean, code_hash),
+            ).fetchone()
+        else:
+            row = db.execute(
+                _sql("""
+                    SELECT platform_user_id, expires_at, used_at, code
+                    FROM telegram_link_codes
+                    WHERE code = ?
+                    LIMIT 1
+                """),
+                (code_clean,),
+            ).fetchone()
 
         if not row:
             return False, "الكود غير صحيح."
@@ -1089,9 +1330,10 @@ def redeem_telegram_link_code(telegram_id: int, code_raw: str):
             _sql("""
                 UPDATE telegram_link_codes
                 SET used_at = ?, used_by_telegram_id = ?
-                WHERE code = ? AND used_at IS NULL
+                WHERE (code = ? OR (code_hash = ?))
+                  AND used_at IS NULL
             """),
-            (now_str, int(telegram_id), code_clean),
+            (now_str, int(telegram_id), code_clean, code_hash),
         )
 
         db.execute(
@@ -1548,7 +1790,377 @@ def attach_main_menu_button(kb=None):
     kb["inline_keyboard"].append(
         [{"text": "🏠 القائمة الرئيسية", "callback_data": "main_menu"}]
     )
-    return kb    
+    return kb 
+
+def tg_set_pending(telegram_id: int, action: str | None, data: dict | None = None):
+    db = get_db()
+    data_str = json.dumps(data or {}, ensure_ascii=False) if action else None
+    db.execute(
+        _sql("""
+            UPDATE telegram_users
+            SET pending_action = ?, pending_data = ?
+            WHERE telegram_id = ?
+        """),
+        (action, data_str, int(telegram_id)),
+    )
+    db.commit()
+
+
+def tg_get_pending(telegram_id: int):
+    db = get_db()
+    row = db.execute(
+        _sql("SELECT pending_action, pending_data FROM telegram_users WHERE telegram_id = ?"),
+        (int(telegram_id),),
+    ).fetchone()
+    if not row:
+        return None, {}
+    action = row.get("pending_action")
+    data_raw = row.get("pending_data") or "{}"
+    try:
+        data = json.loads(data_raw) if isinstance(data_raw, str) else {}
+    except Exception:
+        data = {}
+    return action, data
+
+
+def tg_clear_pending(telegram_id: int):
+    tg_set_pending(int(telegram_id), None, None)
+
+
+def check_price_alerts_now(telegram_id: int) -> tuple[int, str]:
+    """
+    يفحص تنبيهات المستخدم ويطلق التنبيه إذا تحقق الشرط.
+    يرجع: (triggered_count, details_text)
+
+    ✅ تم تحديثها لتعمل مع أي شكل من أعمدة جدول telegram_price_alerts
+    """
+    db = get_db()
+
+    # نقرأ أعمدة الجدول حتى نعرف بأي أسماء نتعامل
+    has_new_cols = False
+    has_old_cols = False
+
+    try:
+        if USE_POSTGRES:
+            cur = db.cursor()
+            has_old_cols = _pg_column_exists(cur, "telegram_price_alerts", "base") and _pg_column_exists(cur, "telegram_price_alerts", "target_price")
+            has_new_cols = _pg_column_exists(cur, "telegram_price_alerts", "base_currency") and _pg_column_exists(cur, "telegram_price_alerts", "target")
+        else:
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            has_old_cols = _sqlite_column_exists(cur, "telegram_price_alerts", "base") and _sqlite_column_exists(cur, "telegram_price_alerts", "target_price")
+            has_new_cols = _sqlite_column_exists(cur, "telegram_price_alerts", "base_currency") and _sqlite_column_exists(cur, "telegram_price_alerts", "target")
+            conn.close()
+    except Exception:
+        pass
+
+    # Query حسب الأعمدة
+    if has_old_cols:
+        rows = db.execute(
+            _sql("""
+                SELECT id, base, quote, direction, target_price
+                FROM telegram_price_alerts
+                WHERE telegram_id = ?
+                  AND is_active = ?
+            """),
+            (int(telegram_id), True if USE_POSTGRES else 1),
+        ).fetchall()
+        mode = "old"
+    else:
+        rows = db.execute(
+            _sql("""
+                SELECT id, base_currency, quote_currency, direction, target
+                FROM telegram_price_alerts
+                WHERE telegram_id = ?
+                  AND is_active = ?
+            """),
+            (int(telegram_id), True if USE_POSTGRES else 1),
+        ).fetchall()
+        mode = "new"
+
+    if not rows:
+        return 0, "لا يوجد تنبيهات مفعّلة حالياً."
+
+    triggered = 0
+    lines = []
+    now_str = _now_str()
+
+    for r in rows:
+        alert_id = int(r["id"])
+        if mode == "old":
+            base = r.get("base")
+            quote = r.get("quote")
+            target = float(r.get("target_price") or 0.0)
+        else:
+            base = r.get("base_currency")
+            quote = r.get("quote_currency")
+            target = float(r.get("target") or 0.0)
+
+        direction = r.get("direction") or "above"
+
+        rate = _get_rate(base, quote)
+        if rate is None:
+            lines.append(f"❌ {base}/{quote}: تعذر جلب السعر الآن.")
+            continue
+
+        hit = (rate >= target) if direction == "above" else (rate <= target)
+        lines.append(f"• {base}/{quote} = {rate:.6f} | الهدف {('≥' if direction=='above' else '≤')} {target}")
+
+        if hit:
+            triggered += 1
+            # عطّل التنبيه بعد إطلاقه (بسيط)
+            if mode == "old":
+                db.execute(
+                    _sql("""
+                        UPDATE telegram_price_alerts
+                        SET is_active = ?, triggered_at = ?
+                        WHERE id = ? AND telegram_id = ?
+                    """),
+                    (False if USE_POSTGRES else 0, now_str, alert_id, int(telegram_id)),
+                )
+            else:
+                db.execute(
+                    _sql("""
+                        UPDATE telegram_price_alerts
+                        SET is_active = ?, last_triggered_at = ?
+                        WHERE id = ? AND telegram_id = ?
+                    """),
+                    (False if USE_POSTGRES else 0, now_str, alert_id, int(telegram_id)),
+                )
+
+    if triggered > 0:
+        db.commit()
+
+    details = "\n".join(lines)
+    return triggered, details
+# ==============================
+# ✅ Price Alerts (Telegram)
+# ==============================
+
+def tg_set_state(telegram_id: int, state: str, data: dict | None = None):
+    db = get_db()
+    now_str = _now_str()
+    payload = json.dumps(data or {}, ensure_ascii=False)
+
+    if USE_POSTGRES:
+        db.execute(
+            _sql("""
+                INSERT INTO telegram_states (telegram_id, state, data_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (telegram_id)
+                DO UPDATE SET state = EXCLUDED.state, data_json = EXCLUDED.data_json, updated_at = EXCLUDED.updated_at
+            """),
+            (int(telegram_id), state, payload, now_str),
+        )
+    else:
+        db.execute(
+            """
+            INSERT INTO telegram_states (telegram_id, state, data_json, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(telegram_id)
+            DO UPDATE SET state=excluded.state, data_json=excluded.data_json, updated_at=excluded.updated_at
+            """,
+            (int(telegram_id), state, payload, now_str),
+        )
+
+    db.commit()
+
+
+def tg_get_state(telegram_id: int) -> dict | None:
+    db = get_db()
+    row = db.execute(
+        _sql("SELECT state, data_json FROM telegram_states WHERE telegram_id = ? LIMIT 1"),
+        (int(telegram_id),),
+    ).fetchone()
+
+    if not row:
+        return None
+
+    st = row["state"] if isinstance(row, dict) else row[0]
+    dj = row["data_json"] if isinstance(row, dict) else row[1]
+
+    try:
+        data = json.loads(dj) if dj else {}
+    except Exception:
+        data = {}
+
+    return {"state": st, "data": data}
+
+
+def tg_clear_state(telegram_id: int):
+    db = get_db()
+    db.execute(
+        _sql("DELETE FROM telegram_states WHERE telegram_id = ?"),
+        (int(telegram_id),),
+    )
+    db.commit()
+
+
+def _parse_alert_text(text: str):
+    """
+    يقبل مثلاً:
+      USD/MAD > 10.50
+      USD MAD below 10.50
+      EUR GBP فوق 0.92
+      EUR/GBP تحت 0.92
+    """
+    raw = (text or "").strip().upper()
+    raw = raw.replace("→", " ").replace("->", " ").replace("=", " ")
+
+    # كلمات عربية
+    raw = raw.replace("فوق", " ABOVE ").replace("تحت", " BELOW ")
+
+    m = re.match(
+        r"^\s*([A-Z]{3})\s*[/\s]+\s*([A-Z]{3})\s*(ABOVE|BELOW|>|<)\s*([0-9]+(?:\.[0-9]+)?)\s*$",
+        raw,
+    )
+    if not m:
+        return None
+
+    base = m.group(1)
+    quote = m.group(2)
+    op = m.group(3)
+    target = float(m.group(4))
+
+    direction = "above" if op in ("ABOVE", ">") else "below"
+
+    if base not in CURRENCIES or quote not in CURRENCIES:
+        return None
+
+    if target <= 0:
+        return None
+
+    return base, quote, direction, target
+
+
+def create_price_alert(telegram_id: int, base: str, quote: str, direction: str, target: float):
+    db = get_db()
+    now_str = _now_str()
+
+    # ✅ نكتب في الأعمدة الجديدة + القديمة إن كانت موجودة (للتوافق)
+    if USE_POSTGRES:
+        db.execute(
+            _sql("""
+                INSERT INTO telegram_price_alerts
+                    (telegram_id, base_currency, quote_currency, direction, target, base, quote, target_price, is_active, created_at)
+                VALUES
+                    (?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?)
+            """),
+            (int(telegram_id), base, quote, direction, float(target), base, quote, float(target), now_str),
+        )
+    else:
+        db.execute(
+            """
+            INSERT INTO telegram_price_alerts
+                (telegram_id, base_currency, quote_currency, direction, target, base, quote, target_price, is_active, created_at)
+            VALUES
+                (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            """,
+            (int(telegram_id), base, quote, direction, float(target), base, quote, float(target), now_str),
+        )
+
+    db.commit()
+
+
+def list_price_alerts(telegram_id: int):
+    db = get_db()
+    rows = db.execute(
+        _sql("""
+            SELECT id,
+                   COALESCE(base_currency, base) AS base_currency,
+                   COALESCE(quote_currency, quote) AS quote_currency,
+                   direction,
+                   COALESCE(target, target_price) AS target,
+                   created_at
+            FROM telegram_price_alerts
+            WHERE telegram_id = ?
+              AND is_active = ?
+            ORDER BY id DESC
+            LIMIT 50
+        """),
+        (int(telegram_id), True if USE_POSTGRES else 1),
+    ).fetchall()
+
+    return rows or []
+
+
+def deactivate_price_alert(telegram_id: int, alert_id: int) -> bool:
+    db = get_db()
+    if USE_POSTGRES:
+        cur = db.execute(
+            _sql("""
+                UPDATE telegram_price_alerts
+                SET is_active = FALSE
+                WHERE id = ? AND telegram_id = ?
+            """),
+            (int(alert_id), int(telegram_id)),
+        )
+        db.commit()
+        return getattr(cur, "rowcount", 0) > 0
+
+    cur = db.execute(
+        """
+        UPDATE telegram_price_alerts
+        SET is_active = 0
+        WHERE id = ? AND telegram_id = ?
+        """,
+        (int(alert_id), int(telegram_id)),
+    )
+    db.commit()
+    return (cur.rowcount or 0) > 0
+
+
+def _get_rate(base: str, quote: str) -> float | None:
+    try:
+        # نحسب سعر 1 base إلى quote
+        rate = convert_currency(1.0, base, quote)
+        return float(rate)
+    except Exception:
+        return None
+
+
+def check_alerts_for_telegram_id(telegram_id: int) -> int:
+    """
+    يفحص التنبيهات النشطة لهذا المستخدم، ويُرسل إشعار عند تحقق الشرط.
+    لتبسيط النظام: عندما يتحقق الشرط => نوقف التنبيه (is_active = false).
+    يرجع عدد التنبيهات التي تم تفعيلها.
+    """
+    alerts = list_price_alerts(telegram_id)
+    if not alerts:
+        return 0
+
+    fired = 0
+    for a in alerts:
+        aid = a["id"] if isinstance(a, dict) else a[0]
+        base = a["base_currency"] if isinstance(a, dict) else a[1]
+        quote = a["quote_currency"] if isinstance(a, dict) else a[2]
+        direction = a["direction"] if isinstance(a, dict) else a[3]
+        target = float(a["target"] if isinstance(a, dict) else a[4])
+
+        rate = _get_rate(base, quote)
+        if rate is None:
+            continue
+
+        ok = (rate >= target) if direction == "above" else (rate <= target)
+        if not ok:
+            continue
+
+        # أوقف التنبيه + أرسل رسالة
+        deactivate_price_alert(telegram_id, int(aid))
+        fired += 1
+
+        arrow = "⬆️" if direction == "above" else "⬇️"
+        msg = (
+            "🔔 <b>تنبيه سعر تحقق!</b>\n\n"
+            f"{base}/{quote} {arrow}\n"
+            f"السعر الحالي: <b>{rate:.4f}</b>\n"
+            f"الهدف: <b>{target:.4f}</b>\n\n"
+            "✅ تم إيقاف هذا التنبيه تلقائيًا بعد التفعيل."
+        )
+        kb = attach_main_menu_button()
+        tg_send_message(int(telegram_id), msg, reply_markup=kb)
+
+    return fired                         
 # ==============================
 # المسارات الأساسية (المستخدم)
 # ==============================
@@ -1841,7 +2453,7 @@ def register():
         # ==============================
         try:
             verify_token = secrets.token_urlsafe(32)
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now_str = _now_str()  # ✅ أفضل من datetime.now()
 
             db.execute(
                 _sql("""
@@ -1864,14 +2476,6 @@ def register():
                 "✅ تم إنشاء الحساب، لكن تعذر إرسال بريد التفعيل حالياً. "
                 "حاول لاحقاً أو تواصل مع الدعم.",
                 "info",
-            )
-
-        except Exception as e:
-            logging.exception("register error (verification email): %s", e)
-            flash(
-                "⚠️ تم إنشاء الحساب، لكن تعذر إرسال رسالة التفعيل حالياً. "
-                "يرجى المحاولة لاحقاً أو التواصل مع الدعم.",
-                "error",
             )
 
         return redirect(url_for("login"))
@@ -2637,6 +3241,7 @@ def activate_reward():
         logging.exception("activate_reward failed: %s", e)
         return jsonify(success=False, message="حدث خطأ داخلي أثناء تفعيل المكافأة"), 500
 
+
 @app.get("/rewards")
 def rewards_page():
     if not session.get("user_id"):
@@ -2651,7 +3256,9 @@ def rewards_page():
         user=user,
         reward_amount=REWARD_AMOUNT,
         cooldown_hours=COOLDOWN_HOURS,
-    )        
+    )
+
+
 # ==============================
 # صفحة الإشعارات للمستخدم
 # ==============================
@@ -2780,7 +3387,7 @@ def telegram_webhook():
         return "Bot token not configured", 200
 
     try:
-        update = request.get_json(force=True)
+        update = request.get_json(force=True) or {}
     except Exception:
         return "invalid json", 400
 
@@ -2791,10 +3398,13 @@ def telegram_webhook():
     # رسائل نصية عادية
     # =========================
     if "message" in update:
-        message = update["message"]
+        message = update["message"] or {}
         text = (message.get("text") or "").strip()
-        chat_id = message["chat"]["id"]
-        from_user = message.get("from", {})
+        chat_id = (message.get("chat") or {}).get("id")
+        from_user = message.get("from") or {}
+
+        if not chat_id:
+            return "ok", 200
 
         # /start param (للإحالة)
         start_param = None
@@ -2804,34 +3414,96 @@ def telegram_webhook():
         # تسجيل/تحديث المستخدم في telegram_users + الإحالات
         register_telegram_user(from_user, start_param)
 
-        # أمر /start
-        if text.startswith("/start"):
-            tg_id = from_user.get("id")
-            ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
+        tg_id = from_user.get("id")
 
-            welcome_text = (
-                "👋 أهلاً بك في بوت المنصة.\n\n"
-                "يمكنك من هنا الدخول إلى المنصة، استخدام نظام الإحالات، "
-                "أو الوصول إلى بعض الخدمات الفرعية.\n\n"
-                "🔗 رابط المنصة:\n"
-                f"{SITE_PUBLIC_URL}\n\n"
-                "✅ رابط إحالتك:\n"
-                f"{ref_link}"
-            )
+        # ----- Pending actions (alerts add/delete) -----
+        if tg_id:
+            pending_action, _pdata = tg_get_pending(int(tg_id))
 
-            main_kb = {
-                "inline_keyboard": [
-                    [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
-                    [{"text": "💳 الرصيد / Balance", "callback_data": "wallet"}],
-                    [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
-                    [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
-                    [{"text": "💸 تحويل الرصيد / Transfer balance", "callback_data": "transfer_balance"}],
-                    [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
-                ]
-            }
+            # إضافة تنبيه: المستخدم يرسل صيغة التنبيه
+            if pending_action == "add_alert":
+                parsed = _parse_alert_text(text)
+                if not parsed:
+                    tg_send_message(
+                        chat_id,
+                        "❌ صيغة غير صحيحة.\nأرسل مثلاً: <b>USD/MAD > 10.5</b>",
+                        reply_markup=attach_main_menu_button(
+                            {"inline_keyboard": [[{"text": "🔔 تنبيهات الأسعار", "callback_data": "alerts_menu"}]]}
+                        ),
+                    )
+                    return "ok", 200
 
-            tg_send_message(chat_id, welcome_text, reply_markup=main_kb)
-            return "ok", 200
+                base, quote, direction, target = parsed
+
+                if base not in CURRENCIES or quote not in CURRENCIES:
+                    tg_send_message(
+                        chat_id,
+                        f"❌ عملة غير مدعومة.\nالمتاح: {', '.join(CURRENCIES)}",
+                        reply_markup=attach_main_menu_button(
+                            {"inline_keyboard": [[{"text": "🔔 تنبيهات الأسعار", "callback_data": "alerts_menu"}]]}
+                        ),
+                    )
+                    return "ok", 200
+
+                try:
+                    create_price_alert(int(tg_id), base, quote, direction, target)
+                    tg_clear_pending(int(tg_id))
+                    tg_send_message(
+                        chat_id,
+                        f"✅ تم إنشاء تنبيه: <b>{base}/{quote} {'>' if direction=='above' else '<'} {target}</b>\n"
+                        "يمكنك عرض/حذف/فحص التنبيهات من القائمة.",
+                        reply_markup=attach_main_menu_button(
+                            {"inline_keyboard": [[{"text": "🔔 تنبيهات الأسعار", "callback_data": "alerts_menu"}]]}
+                        ),
+                    )
+                    return "ok", 200
+                except Exception as e:
+                    logging.exception("create_price_alert failed: %s", e)
+                    tg_send_message(
+                        chat_id,
+                        "❌ حدث خطأ أثناء إنشاء التنبيه.",
+                        reply_markup=attach_main_menu_button(),
+                    )
+                    return "ok", 200
+
+            # حذف تنبيه: المستخدم يرسل رقم التنبيه
+            if pending_action == "delete_alert":
+                try:
+                    alert_id = int((text or "").strip())
+                except Exception:
+                    tg_send_message(
+                        chat_id,
+                        "❌ أرسل رقم التنبيه فقط (مثال: 12).",
+                        reply_markup=attach_main_menu_button(
+                            {"inline_keyboard": [[{"text": "📋 عرض التنبيهات", "callback_data": "alerts_list"}]]}
+                        ),
+                    )
+                    return "ok", 200
+
+                try:
+                    # ✅ إصلاح: قد لا تكون delete_price_alert موجودة عندك (بعض النسخ اسمها deactivate_price_alert)
+                    if "delete_price_alert" in globals():
+                        delete_price_alert(int(tg_id), alert_id)
+                    else:
+                        deactivate_price_alert(int(tg_id), alert_id)
+
+                    tg_clear_pending(int(tg_id))
+                    tg_send_message(
+                        chat_id,
+                        f"✅ تم حذف/تعطيل التنبيه رقم <b>#{alert_id}</b> (إن كان موجوداً).",
+                        reply_markup=attach_main_menu_button(
+                            {"inline_keyboard": [[{"text": "📋 عرض التنبيهات", "callback_data": "alerts_list"}]]}
+                        ),
+                    )
+                    return "ok", 200
+                except Exception as e:
+                    logging.exception("delete_price_alert failed: %s", e)
+                    tg_send_message(
+                        chat_id,
+                        "❌ حدث خطأ أثناء الحذف.",
+                        reply_markup=attach_main_menu_button(),
+                    )
+                    return "ok", 200
 
         # محاولة تفسير النص على أنه كود ربط
         raw = (text or "").strip().upper()
@@ -2847,72 +3519,29 @@ def telegram_webhook():
                 uname = ""
                 try:
                     db = get_db()
-                    urow = db.execute(
-                        _sql("SELECT username FROM users WHERE id = ?"),
-                        (platform_user_id,),
-                    ).fetchone()
+                    urow = db.execute(_sql("SELECT username FROM users WHERE id = ?"), (platform_user_id,)).fetchone()
                     if urow:
-                        uname = urow["username"]
+                        uname = urow["username"] if isinstance(urow, dict) else urow[0]
                 except Exception:
                     pass
 
                 tg_send_message(
                     chat_id,
                     "✅ تم ربط حسابك بنجاح.\n" + (f"👤 حساب المنصة: <b>{uname}</b>" if uname else ""),
+                    reply_markup=attach_main_menu_button(),
                 )
 
-                # صرف تلقائي للإحالات إن وجدت
                 try:
                     apply_referral_auto_cashout_for_telegram(from_user.get("id"))
                 except Exception:
                     pass
             else:
-                # ✅ إصلاح الخطأ المطبعي هنا
-                tg_send_message(chat_id, f"❌ {info}")
+                tg_send_message(chat_id, f"❌ {info}", reply_markup=attach_main_menu_button())
 
             return "ok", 200
 
-        # أي رسالة أخرى
-        tg_send_message(chat_id, "استخدم الأمر /start للحصول على القائمة الرئيسية للبوت.")
-        return "ok", 200
-
-    # =========================
-    # أزرار Inline (callback_query)
-    # =========================
-    if "callback_query" in update:
-        cq = update["callback_query"]
-        data = cq.get("data")
-        chat_id = cq["message"]["chat"]["id"]
-        from_user = cq.get("from", {})
-        tg_id = from_user.get("id")
-        callback_id = cq.get("id")
-
-        if callback_id:
-            tg_answer_callback(callback_id)
-
-        # 💳 الرصيد / Balance
-        if data == "wallet":
-            w = get_telegram_wallet(int(tg_id))
-
-            bot_bal = float(w.get("bot_balance_usd", 0.0))
-            ref_bal = float(w.get("referral_credits_usd", 0.0))
-            total = bot_bal + ref_bal
-            linked = w.get("platform_user_id")
-
-            msg = (
-                "💳 <b>رصيدك داخل البوت</b>\n\n"
-                f"💰 رصيد البوت (Bot balance): <b>{bot_bal:.3f}$</b>\n"
-                f"🎁 رصيد الإحالات (Referral): <b>{ref_bal:.3f}$</b>\n"
-                f"🧾 الرصيد الإجمالي (Total): <b>{total:.3f}$</b>\n\n"
-                f"🔗 حالة الربط: {'✅ مربوط' if linked else '❌ غير مربوط'}"
-            )
-
-            kb = attach_main_menu_button()
-            tg_send_message(chat_id, msg, reply_markup=kb)
-            return "ok", 200
-
-        # 🏠 الرجوع للقائمة الرئيسية
-        if data == "main_menu":
+        # أمر /start (القائمة الرئيسية)
+        if text.startswith("/start"):
             ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
 
             welcome_text = (
@@ -2931,7 +3560,7 @@ def telegram_webhook():
                     [{"text": "💳 الرصيد / Balance", "callback_data": "wallet"}],
                     [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
                     [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
-                    [{"text": "💸 تحويل الرصيد / Transfer balance", "callback_data": "transfer_balance"}],
+                    [{"text": "💸 تحويل الرصيد / Transfer balance", "callback_data": "transfer_all_to_platform"}],
                     [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
                 ]
             }
@@ -2939,19 +3568,83 @@ def telegram_webhook():
             tg_send_message(chat_id, welcome_text, reply_markup=main_kb)
             return "ok", 200
 
+        tg_send_message(chat_id, "استخدم الأمر /start للحصول على القائمة الرئيسية للبوت.")
+        return "ok", 200
+
+    # =========================
+    # أزرار Inline (callback_query)
+    # =========================
+    if "callback_query" in update:
+        cq = update["callback_query"] or {}
+        data = cq.get("data")
+        from_user = cq.get("from") or {}
+        tg_id = from_user.get("id")
+        callback_id = cq.get("id")
+
+        msg_obj = cq.get("message") or {}
+        chat_id = (msg_obj.get("chat") or {}).get("id")
+
+        if callback_id:
+            tg_answer_callback(callback_id)
+
+        if not chat_id or not tg_id or not data:
+            return "ok", 200
+
+        # 💳 الرصيد / Balance
+        if data == "wallet":
+            w = get_telegram_wallet(int(tg_id))
+            bot_bal = float(w.get("bot_balance_usd", 0.0))
+            ref_bal = float(w.get("referral_credits_usd", 0.0))
+            total = bot_bal + ref_bal
+            linked = w.get("platform_user_id")
+
+            msg = (
+                "💳 <b>رصيدك داخل البوت</b>\n\n"
+                f"💰 رصيد البوت (Bot balance): <b>{bot_bal:.3f}$</b>\n"
+                f"🎁 رصيد الإحالات (Referral): <b>{ref_bal:.3f}$</b>\n"
+                f"🧾 الرصيد الإجمالي (Total): <b>{total:.3f}$</b>\n\n"
+                f"🔗 حالة الربط: {'✅ مربوط' if linked else '❌ غير مربوط'}"
+            )
+            tg_send_message(chat_id, msg, reply_markup=attach_main_menu_button())
+            return "ok", 200
+
+        # 🏠 الرجوع للقائمة الرئيسية
+        if data == "main_menu":
+            ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
+            welcome_text = (
+                "👋 أهلاً بك في بوت المنصة.\n\n"
+                "يمكنك من هنا الدخول إلى المنصة، استخدام نظام الإحالات، "
+                "أو الوصول إلى بعض الخدمات الفرعية.\n\n"
+                "🔗 رابط المنصة:\n"
+                f"{SITE_PUBLIC_URL}\n\n"
+                "✅ رابط إحالتك:\n"
+                f"{ref_link}"
+            )
+            main_kb = {
+                "inline_keyboard": [
+                    [{"text": "🌐 المنصة / Platform", "url": SITE_PUBLIC_URL}],
+                    [{"text": "💳 الرصيد / Balance", "callback_data": "wallet"}],
+                    [{"text": "🔗 ربط الحساب / Link account", "callback_data": "link_account"}],
+                    [{"text": "👥 نظام الإحالات / Referrals", "callback_data": "referrals"}],
+                    [{"text": "💸 تحويل الرصيد / Transfer balance", "callback_data": "transfer_all_to_platform"}],
+                    [{"text": "🧰 الخدمات الفرعية / Services", "callback_data": "services"}],
+                ]
+            }
+            tg_send_message(chat_id, welcome_text, reply_markup=main_kb)
+            return "ok", 200
+
         # 👥 نظام الإحالات
         if data == "referrals":
             ref_link = f"https://t.me/Currencyexchangedh_bot?start=ref_{tg_id}"
-
-            db = get_db()
             referral_credits = 0.0
             try:
+                db = get_db()
                 row = db.execute(
                     _sql("SELECT referral_credits_usd FROM telegram_users WHERE telegram_id = ?"),
                     (tg_id,),
                 ).fetchone()
-                if row and row.get("referral_credits_usd") is not None:
-                    referral_credits = float(row["referral_credits_usd"])
+                if row:
+                    referral_credits = float(row["referral_credits_usd"] if isinstance(row, dict) else row[0] or 0.0)
             except Exception as e:
                 logging.warning("referrals select error: %s", e)
 
@@ -2964,51 +3657,136 @@ def telegram_webhook():
                 f"🎁 مكافأة الإحالة غير المباشرة (Level 2): {REF_L2_BONUS_USD}$\n\n"
                 "ℹ️ عند وصول أرباح الإحالة إلى 1$ سيتم تحويلها تلقائياً إلى رصيدك في المنصة (USD) إذا كان حسابك مربوطاً."
             )
-
-            kb = attach_main_menu_button()
-            tg_send_message(chat_id, msg, reply_markup=kb)
+            tg_send_message(chat_id, msg, reply_markup=attach_main_menu_button())
             return "ok", 200
 
         # 🧰 الخدمات الفرعية
         if data == "services":
-            msg = (
-                "🧰 <b>الخدمات الفرعية</b>\n\n"
-                "سيتم هنا لاحقًا إضافة أزرار لخدمات إضافية "
-                "مثل: أسعار الصرف، شروحات، أو أدوات أخرى مرتبطة بالمنصة."
-            )
-            kb = attach_main_menu_button()
-            tg_send_message(chat_id, msg, reply_markup=kb)
-            return "ok", 200
-
-        # 💸 تحويل الرصيد – قائمة فرعية
-        if data == "transfer_balance":
-            msg = (
-                "💸 <b>تحويل الرصيد</b>\n\n"
-                "يمكنك تحويل كامل رصيد البوت (مع الإحالات) إلى حسابك في المنصة.\n\n"
-                "اختر أحد الخيارات:"
-            )
+            msg = "🧰 <b>الخدمات الفرعية</b>\n\nاختر خدمة من القائمة:"
             kb = {
                 "inline_keyboard": [
-                    [{"text": "💰 تحويل كل الرصيد إلى المنصة", "callback_data": "transfer_all_to_platform"}],
+                    [{"text": "🔔 تنبيهات الأسعار / Price Alerts", "callback_data": "alerts_menu"}],
+                    [{"text": "✅ فحص التنبيهات الآن", "callback_data": "alerts_check"}],
+                    [{"text": "📊 أسعار الصرف الفورية / Live Rates", "callback_data": "svc_live_rates"}],
+                    [{"text": "⏱ حاسبة التحويل / Calculator", "callback_data": "svc_calc"}],
+                    [{"text": "🧠 أدوات المتداول / Trader Tools", "callback_data": "svc_trader_tools"}],
+                    [{"text": "⭐ الخدمة المميزة / Premium (قريباً)", "callback_data": "svc_premium"}],
+                    [{"text": "🆘 الدعم والمساعدة / Support", "callback_data": "svc_support"}],
                 ]
             }
-            kb = attach_main_menu_button(kb)
-            tg_send_message(chat_id, msg, reply_markup=kb)
+            tg_send_message(chat_id, msg, reply_markup=attach_main_menu_button(kb))
             return "ok", 200
 
-        # ✅ تنفيذ تحويل كامل رصيد البوت إلى المنصة
-        if data == "transfer_all_to_platform":
-            total = get_total_bot_balance(tg_id)
-            if total <= 0:
-                msg = "⚠️ لا يوجد رصيد متاح في البوت أو رصيد الإحالات للتحويل."
-                kb = attach_main_menu_button()
-                tg_send_message(chat_id, msg, reply_markup=kb)
+        # 🔔 قائمة تنبيهات الأسعار
+        if data == "alerts_menu":
+            msg = "🔔 <b>تنبيهات الأسعار</b>\n\nاختر عملية:"
+            kb = {
+                "inline_keyboard": [
+                    [{"text": "➕ إضافة تنبيه", "callback_data": "alerts_add"}],
+                    [{"text": "📋 عرض التنبيهات", "callback_data": "alerts_list"}],
+                    [{"text": "🗑 حذف تنبيه", "callback_data": "alerts_delete"}],
+                    [{"text": "✅ فحص التنبيهات الآن", "callback_data": "alerts_check"}],
+                ]
+            }
+            tg_send_message(chat_id, msg, reply_markup=attach_main_menu_button(kb))
+            return "ok", 200
+
+        # ➕ إضافة تنبيه
+        if data == "alerts_add":
+            tg_set_pending(int(tg_id), "add_alert", {})
+            msg = (
+                "➕ <b>إضافة تنبيه</b>\n\n"
+                "أرسل التنبيه بهذه الصيغة:\n"
+                "<code>USD/MAD > 10.50</code>\n"
+                "<code>EUR/GBP < 0.92</code>"
+            )
+            tg_send_message(chat_id, msg, reply_markup=attach_main_menu_button())
+            return "ok", 200
+
+        # 📋 عرض التنبيهات
+        if data == "alerts_list":
+            rows = []
+            try:
+                rows = list_price_alerts(int(tg_id))
+            except Exception as e:
+                logging.exception("list_price_alerts failed: %s", e)
+
+            if not rows:
+                tg_send_message(chat_id, "📋 لا توجد تنبيهات حالياً.", reply_markup=attach_main_menu_button())
                 return "ok", 200
 
-            ok, msg2 = transfer_bot_to_platform_by_telegram_id(tg_id, total)
-            msg = msg2 if ok else f"❌ {msg2}"
-            kb = attach_main_menu_button()
-            tg_send_message(chat_id, msg, reply_markup=kb)
+            # ✅ إصلاح توافق: بعض النسخ ترجع base/quote/target_price وبعضها base_currency/quote_currency/target
+            lines = ["📋 <b>تنبيهاتك</b>\n"]
+            for r in rows:
+                rid = r["id"] if isinstance(r, dict) else r[0]
+
+                base = (
+                    r.get("base") if isinstance(r, dict) else None
+                ) or (
+                    r.get("base_currency") if isinstance(r, dict) else None
+                ) or (r[1] if not isinstance(r, dict) and len(r) > 1 else "")
+
+                quote = (
+                    r.get("quote") if isinstance(r, dict) else None
+                ) or (
+                    r.get("quote_currency") if isinstance(r, dict) else None
+                ) or (r[2] if not isinstance(r, dict) and len(r) > 2 else "")
+
+                direction = (
+                    r.get("direction") if isinstance(r, dict) else None
+                ) or (r[3] if not isinstance(r, dict) and len(r) > 3 else "above")
+
+                target = (
+                    r.get("target_price") if isinstance(r, dict) else None
+                ) or (
+                    r.get("target") if isinstance(r, dict) else None
+                ) or (r[4] if not isinstance(r, dict) and len(r) > 4 else 0)
+
+                # بعض الدوال تُرجع فقط التنبيهات النشطة، فلا يوجد is_active في SELECT
+                active = r.get("is_active") if isinstance(r, dict) else (r[5] if len(r) > 5 else 1)
+
+                op = ">" if str(direction) == "above" else "<"
+                status = "✅" if (active is True or active == 1) else "⛔"
+                lines.append(f"{status} <b>#{rid}</b> — {base}/{quote} {op} {float(target):.6f}")
+
+            tg_send_message(chat_id, "\n".join(lines), reply_markup=attach_main_menu_button())
+            return "ok", 200
+
+        # 🗑 حذف تنبيه
+        if data == "alerts_delete":
+            tg_set_pending(int(tg_id), "delete_alert", {})
+            msg = "🗑 <b>حذف تنبيه</b>\n\nأرسل رقم التنبيه فقط (مثال: <b>12</b>)."
+            tg_send_message(chat_id, msg, reply_markup=attach_main_menu_button())
+            return "ok", 200
+
+        # ✅ فحص التنبيهات الآن
+        if data == "alerts_check":
+            try:
+                triggered, details = check_price_alerts_now(int(tg_id))
+                msg = (
+                    "✅ <b>نتيجة الفحص</b>\n\n"
+                    f"تم تفعيل: <b>{triggered}</b> تنبيه(ات)\n\n"
+                    f"{details}"
+                )
+            except Exception as e:
+                logging.exception("check_price_alerts_now failed: %s", e)
+                msg = "❌ حدث خطأ أثناء فحص التنبيهات."
+            tg_send_message(chat_id, msg, reply_markup=attach_main_menu_button())
+            return "ok", 200
+
+        # 💸 تحويل كل الرصيد إلى المنصة
+        if data == "transfer_all_to_platform":
+            total = get_total_bot_balance(int(tg_id))
+            if total <= 0:
+                tg_send_message(
+                    chat_id,
+                    "⚠️ لا يوجد رصيد متاح في البوت أو رصيد الإحالات للتحويل.",
+                    reply_markup=attach_main_menu_button(),
+                )
+                return "ok", 200
+
+            ok, msg2 = transfer_bot_to_platform_by_telegram_id(int(tg_id), float(total))
+            tg_send_message(chat_id, msg2 if ok else f"❌ {msg2}", reply_markup=attach_main_menu_button())
             return "ok", 200
 
         # 🔗 ربط الحساب
@@ -3019,22 +3797,44 @@ def telegram_webhook():
                 "1) افتح صفحة الربط من الزر بالأسفل.\n"
                 "2) اضغط: توليد كود.\n"
                 "3) انسخ الكود.\n"
-                "4) أرسله هنا في البوت (مثال: LNK-ABC12345)\n\n"
+                "4) أرسله هنا في البوت (مثال: <code>LNK-ABC12345</code>)\n\n"
                 "📌 الكود صالح لمدة 10 دقائق."
             )
             kb = {"inline_keyboard": [[{"text": "🔗 فتح صفحة الربط", "url": link_url}]]}
-            kb = attach_main_menu_button(kb)
-            tg_send_message(chat_id, msg, reply_markup=kb)
+            tg_send_message(chat_id, msg, reply_markup=attach_main_menu_button(kb))
             return "ok", 200
 
-        # أي زر غير معروف
-        msg = "الخيار غير معروف حالياً."
-        kb = attach_main_menu_button()
-        tg_send_message(chat_id, msg, reply_markup=kb)
+        # (مؤقتاً) خدمات أخرى
+        if data == "svc_live_rates":
+            tg_send_message(chat_id, "📊 <b>أسعار الصرف الفورية</b>\n\nقريباً سيتم تفعيل هذه الخدمة.", reply_markup=attach_main_menu_button())
+            return "ok", 200
+
+        if data == "svc_calc":
+            tg_send_message(chat_id, "⏱ <b>حاسبة التحويل</b>\n\nقريباً سيتم تفعيل هذه الخدمة.", reply_markup=attach_main_menu_button())
+            return "ok", 200
+
+        if data == "svc_trader_tools":
+            tg_send_message(chat_id, "🧠 <b>أدوات المتداول</b>\n\nقريباً سيتم تفعيل هذه الخدمة.", reply_markup=attach_main_menu_button())
+            return "ok", 200
+
+        if data == "svc_premium":
+            tg_send_message(
+                chat_id,
+                "⭐ <b>الخدمة المميزة (Premium)</b>\n\nقريباً سيتم إضافة الاشتراك الشهري 5$.",
+                reply_markup=attach_main_menu_button(),
+            )
+            return "ok", 200
+
+        if data == "svc_support":
+            tg_send_message(chat_id, "🆘 <b>الدعم والمساعدة</b>\n\nقريباً سيتم تفعيل صفحة المساعدة والدعم.", reply_markup=attach_main_menu_button())
+            return "ok", 200
+
+        tg_send_message(chat_id, "الخيار غير معروف حالياً.", reply_markup=attach_main_menu_button())
         return "ok", 200
 
-    # لو لم تكن رسالة ولا callback
     return "ok", 200
+
+
 # ✅ (NEW) ربط الحساب من المنصة (routes)
 # ==============================
 @app.route("/link_telegram")
@@ -3098,6 +3898,7 @@ def link_telegram():
         link_code_prefix=LINK_CODE_PREFIX,
     )
 
+
 @app.route("/unlink_telegram", methods=["POST"])
 def unlink_telegram():
     if "username" not in session:
@@ -3145,6 +3946,7 @@ def unlink_telegram():
     flash("✅ تم إلغاء ربط حساب Telegram.", "success")
     return redirect(url_for("link_telegram"))
 
+
 @app.route("/generate_telegram_link_code", methods=["POST"])
 def generate_telegram_link_code():
     if "username" not in session:
@@ -3162,7 +3964,8 @@ def generate_telegram_link_code():
         logging.error("generate_telegram_link_code error: %s", e)
         flash("❌ تعذر توليد كود الربط. حاول مرة أخرى.", "error")
 
-    return redirect(url_for("link_telegram"))    
+    return redirect(url_for("link_telegram"))
+
 
 @app.route("/transfer_to_bot_10", methods=["POST"])
 def transfer_to_bot_10():
@@ -3232,15 +4035,19 @@ def transfer_to_bot_10():
 
     db.commit()
     flash("✅ تم تحويل 10$ إلى رصيد البوت بنجاح.", "success")
-    return redirect(url_for("link_telegram"))    
+    return redirect(url_for("link_telegram"))
+
 
 @app.route("/privacy")
 def privacy_policy():
     return render_template("privacy.html")
 
+
 @app.route("/terms")
 def terms_of_service():
     return render_template("terms.html")
+
+
 # ==============================
 # تشغيل التطبيق
 # ==============================
